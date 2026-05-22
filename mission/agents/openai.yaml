@@ -1,0 +1,3 @@
+display_name: Mission
+short_description: Route approved docs, CSVs, long tasks, and recovery into closed-loop execution
+default_prompt: mission
