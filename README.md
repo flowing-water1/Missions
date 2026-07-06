@@ -2,13 +2,15 @@
 
 > 一套给 agent 用的 skills 包，专治长任务：路由分流、CSV 四状态闭环、中断恢复，全自动跑到底。Codex 和 Claude Code 都能用。
 
-把一个需求扔给 agent，它会自己拆成 CSV、按四状态闭环跑、跑完再 sub-agent review，发现差距就追加 follow-up，最后整批闭环再交还给你。配合 codex 的 `/goal` 用，断联不停、可 resume。
+把一个需求扔给 agent，它会自己拆成 CSV、按四状态闭环跑、用独立 review 对照源文档验收，发现差距就追加 follow-up，最后写出给人看的交接文档再交还给你。配合 codex 的 `/goal` 用，断联不停、可 resume。
 
 ## Features
 
 - **统一入口，自动路由** — 不管你给的是 CSV、md 文档、自然语言任务，还是一句 "continue"，`mission` 会判断走哪条路径
 - **CSV 四状态闭环** — 每条 issue 必须同时满足 `dev_state` / `review_initial_state` / `review_regression_state` / `git_state` 才算完，跳一步都不行
-- **REVIEW 行 + 同模型 sub-agent 复审** — CSV 末尾必有 `REVIEW-01`，用同模型 sub-agent 拿源文档对齐实际交付，发现差距追加 follow-up 和 `REVIEW-N+1`，直到 vision_met
+- **REVIEW 行 + 独立愿景验收** — CSV 末尾必有 `REVIEW-01`，优先用独立 reviewer 对齐源文档、CSV、claim ledger 和实际交付，发现差距追加 follow-up 和 `REVIEW-N+1`
+- **Claim/Evidence Ledger** — approved doc 会先抽取可验证承诺，落盘为 `*.claims.json`，CSV 只引用 claim id，避免 review 时只靠印象对账
+- **Human Handoff** — REVIEW 后生成 `<csv>.handoff.md`，用人能看懂的话说明做了什么、哪些目标兑现了、哪里降级了、怎么复现
 - **test_mcp + required_mcp 分离** — "怎么验证" 和 "用什么工具验证" 是两个维度；前者写策略，后者写执行合约，杜绝"跑个 smoke 就说通过了"
 - **声明-证据一致性硬门禁** — 不允许用 mock / fixture / dry-run / 字符串检查包装成"真实集成 / 真实副作用 / E2E 通过"
 - **受限验收机制** — 测试跑不起来不是免责卡，但客观不可达可以走受限验收，必须如实记录 `validation_limited` / `validation_gap` / `manual_test` / `mcp_evidence` / `risk`
@@ -89,7 +91,7 @@ skill 触发方式因 agent 而异：
 - **Codex CLI**：直接 `$mission xxx` 或在 prompt 里说"用 mission skill 处理 xxx"，命令前缀按你本地 codex 的 skill 触发约定来（很多人用 `$` 前缀）
 - **Claude Code**：skill description 自动匹配触发，你可以直接说"使用 mission skill 执行 @xxx.csv"，或者 `@` 文件后直接描述需求
 
-进入 `mission-csv-execute` 后会自动按四状态闭环跑到底，跑完 sub-agent review，发现差距追加 follow-up，最后整批闭环再交还给你。**反暂停护栏内置在 skill 里**，不依赖外部命令——`mission-csv-execute` 的 SKILL.md 明确写了"非终态 turn 必须以工具调用结尾"、"执行态优先于问答态"等十多条硬规则。
+进入 `mission-csv-execute` 后会自动按四状态闭环跑到底，跑完独立愿景 review，发现差距追加 follow-up，并生成 handoff 交接文档。**反暂停护栏内置在 skill 里**，不依赖外部命令——`mission-csv-execute` 的 SKILL.md 明确写了"非终态 turn 必须以工具调用结尾"、"执行态优先于问答态"等十多条硬规则。
 
 ### Best Practice：Codex + `/goal` 跑长任务
 
@@ -137,7 +139,9 @@ hello
 - **`mission-approved-doc`**：已批准的 design doc / plan → `issues/<timestamp>-<topic>.csv`，**随代码一起提交**
 - **`mission-long-task`**：自然语言任务 → `.mission/<timestamp>-<task-name>.csv`，**本地恢复用，不提交**
 
-两者都强制在 CSV 末尾追加 `REVIEW-01`，且 REVIEW 行的 `review_regression_requirements` 必须包含 2-4 条**任务专属**的 claim/evidence 检查项，不能是通用模板。
+`mission-approved-doc` 会先确认执行范围，再从源文档抽取 Claim/Evidence Ledger，写到 `issues/<csv-basename>.claims.json`。组件 issue 之外，还会为启动注册、consumer、agent tool、flow 注入点这类生产路径生成独立接线 issue，避免"模块写了但没人调用"。
+
+两条路径都强制在 CSV 末尾追加 `REVIEW-01`。REVIEW 行不能只写通用模板；它必须能回读源文档、CSV、claim ledger、测试证据和交付 diff。
 
 ### 3. 执行层（mission-csv-execute）
 
@@ -170,11 +174,20 @@ Step 9  立刻下一条（不问、不停、不礼貌停顿）
 
 ### 4. Vision Review（REVIEW-* 行）
 
-整批 issues 闭环后，跑同模型 sub-agent 对照源文档做愿景验收：
+整批 issues 闭环后，按能力阶梯做愿景验收：
+
+- 优先用 direct `spawn_agent`
+- 其次用 `codex exec --ephemeral --json --skip-git-repo-check --sandbox read-only`
+- `codex review` 只能作为 diff 补充，不能代替 spec / CSV / claim ledger 对账
+- 最后才允许主会话 fallback；fallback 只能写 `limited_review`，不能伪装成 `vision_met`
+
+review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档写到 `<csv-path-without-.csv>.handoff.md`。
+
+结果分三类：
 
 - `vision_met` → 关闭 CSV
 - `gaps_found` → 追加 follow-up issue 和 `REVIEW-(N+1)`，继续跑
-- review log 写到 `<csv-path-without-.csv>.review.md`
+- `limited_review` → 记录独立 review 能力不足，追加等待更强 review 能力的 rerun 行，避免原地无限 review
 
 ### 5. 恢复层（mission-recovery）
 
@@ -204,7 +217,9 @@ Step 9  立刻下一条（不问、不停、不礼貌停顿）
 
 - **批准门**：未明确批准 → 硬停，不写代码
 - **原子性**：单 issue 必须可独立验证、独立提交；多个独立验收场景必须拆行
-- **REVIEW-01 强制**：从源文档抽出任务专属 claim/evidence 写进 review 条件
+- **Claim ledger 强制**：从源文档抽出可验证承诺，写入 `*.claims.json`，每条 claim 都要能追到 issue / evidence / production path
+- **接线 issue 强制**：启动注册、consumer、agent tool、flow 注入点不能藏在组件 issue 里，必须显式生成或标注 deferred
+- **REVIEW-01 强制**：从源文档和 claim ledger 抽出任务专属验收条件
 - **生成阶段就写全** `required_skills` / `required_mcp` / `refs`
 
 ### `mission-long-task`
@@ -217,7 +232,7 @@ Step 9  立刻下一条（不问、不停、不礼貌停顿）
 
 ### `mission-csv-execute`
 
-四状态闭环执行引擎，整套包的强内核。**完整的 Step 0-9、反暂停护栏、受限验收规则都在这个 SKILL.md 里**，文件较长（约 470 行），如果你想深读机制建议直接看源文件。
+四状态闭环执行引擎，整套包的强内核。**完整的 Step 0-9、反暂停护栏、受限验收、独立 review、handoff 生成规则都在这个 SKILL.md 里**，文件较长（600+ 行），如果你想深读机制建议直接看源文件。
 
 关键设计：
 
@@ -226,6 +241,8 @@ Step 9  立刻下一条（不问、不停、不礼貌停顿）
 - **执行态优先于问答态**：可以简短回答用户问题，但回答完同一 turn 必须继续工具调用
 - **干净边界谬误**：partial completion（3/9）是最脏的状态，不要因为"前 N 条做完了"就想收口
 - **声明-证据等级一致**：低等级证据不能支撑高等级声明（unit test ≠ 集成通过、dry-run ≠ 真实发送）
+- **独立 review 能力阶梯**：强 review 不可用时可以降级，但必须写 `limited_review`，不能把自审包装成通过
+- **handoff 是交工单**：`review.md` 给 reviewer 看，`handoff.md` 给人看，二者不能混成一份审计模板
 
 ### `mission-recovery`
 

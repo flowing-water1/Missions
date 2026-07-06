@@ -307,7 +307,11 @@ SuperPower 的地址：[obra/superpowers: An agentic skills framework & software
 - **mission-csv-execute** 负责执行 csv 文件
 - **mission-recovery** 负责恢复执行（因为在执行过程中，可能因为各种原因中断，所以有了这个恢复，就算 key 额度不够，或者不稳定也不用太担心）
 
-这里面我觉得需要提一点，这也是"少返工"的关键点：**在 csv 的末尾加一条 review 的 issue**。对！就这么简单！但是一开始我的流程没有，同时很多人的 csv 文件，似乎都下意识忽略了这点，但是只要加上这点，每次 csv 执行表现就挺好的。执行完了就再 review，直到完全闭环，目前只有 GPT 能够做到，多谢了 GPT 的远程压缩功能。
+这里面我觉得需要提一点，这也是"少返工"的关键点：**在 csv 的末尾加一条 review 的 issue**。对！就这么简单！但是现在这条 review 已经不只是"看一眼有没有做完"了。
+
+新版本会在 spec 转 CSV 时先抽一份 `*.claims.json`，把源文档里能验证的承诺逐条记下来：这条承诺来自哪一行、由哪个 issue 覆盖、需要什么证据、有没有生产路径。执行完之后，REVIEW 行会拿源文档、CSV、claim ledger、测试证据和代码 diff 一起对账。这样就不太容易出现"写了组件，但没接进启动流程"或者"跑了 mock，却说真实链路通了"这种情况。
+
+还有一个变化是 `handoff.md`。以前跑完主要看 `review.md`，但 `review.md` 更像审计日志，过几天再看其实挺累。现在 REVIEW 后会额外产出一份交工单，把这轮做了什么、哪些目标兑现了、哪里降级了、怎么复现，用人话写出来。
 
 > **注意**：现在 5.5 的远程压缩是有问题的，本质原因似乎是因为 OpenAI 没添加 5.5-compact 的模型名字，直到现在都没修。所以只能用 5.4 来执行长任务。我试过在 cch 中添加模型映射，但是无济于事，添加 `stream_idle_timeout_ms = 9000000` 也没有用。如果有懂的佬友可以分享解决办法。
 
@@ -363,7 +367,13 @@ SuperPower 的地址：[obra/superpowers: An agentic skills framework & software
 
 ### 步骤四：等结果，然后看他跑得怎么样
 
-跑完之后，看看他的结论，用新session让他review看看，等等之类的，目前我用得，如果spec和csv都能满意，基本上不会跑偏，而且效果也还行，就是结论不说人话这点确实没招，可能能加别的skills改善？也请知道的佬友推荐一下
+跑完之后，先看同目录下的三类产物：
+
+- `*.review.md`：给 reviewer / agent 看的审计日志，里面会写本轮 review 怎么跑、有没有 gap、证据够不够。
+- `*.handoff.md`：给人看的交工单，重点看这份。它会按 spec 目标对账，说清楚做成了什么、没做成什么、哪里降级了。
+- `*.claims.json`：源文档承诺账本。一般不用你手动看，除非你怀疑某个目标漏了，可以拿它反查 claim 有没有被 issue 覆盖。
+
+现在不太需要你再手动开新 session 做一次泛泛的 review。更有用的做法是：打开 `handoff.md`，按它给的复现步骤自己试一遍；如果你发现产品预期不对，再把那条预期补回 spec 或 CSV。
 
 ![image-20260522160235428](C:\Users\Flow_Water\AppData\Roaming\Typora\typora-user-images\image-20260522160235428.png)
 
@@ -390,7 +400,15 @@ issues/
 
 ## 8. 为什么"少返工"？—— CSV 的四状态闭环机制
 
-为什么能“少返工”，主要是csv的四个状态字段，其实跟之前的差不多，就是改进了一下而且，只有4条尽量都完成了，才会进行下一步。当然，在我使用的过程中，发现有时候，就是完成不了的，比如有些现实情况，这种情况会自动跳过，**之后会产出一个review.md，也就是工作日志，可以供你查看！**就像这样：
+为什么能“少返工”，主要是 csv 的四个状态字段和最后的愿景验收。四个状态字段跟之前差不多，只有 4 条尽量都完成了，才会进入下一步。遇到客观跑不通的情况，不是静默跳过，而是写清楚受限验收、风险和后续动作。
+
+现在跑完不只会产出 `review.md`。如果是从 approved doc 生成的任务，还会有 `claims.json` 和 `handoff.md`：
+
+- `claims.json` 管"源文档承诺有没有被覆盖"。
+- `review.md` 管"审查过程和证据够不够"。
+- `handoff.md` 管"人回来之后能不能看懂这轮到底干了什么"。
+
+就像这样：
 
 ![image-20260525100029471](C:\Users\Flow_Water\AppData\Roaming\Typora\typora-user-images\image-20260525100029471.png)
 
@@ -403,7 +421,7 @@ issues/
 
 只有四个状态全部到位，这条 issue 才算关闭。这就是为什么"少返工"——不是靠 review issue 一条命令解决的，而是每一条 issue 都自带了"写完 -> 自查 -> 回归 -> 提交"的完整闭环。Codex 不能跳过任何一步就声称完成。
 
-加上 CSV 末尾的 REVIEW 行（整体验收），就形成了"微观闭环 + 宏观验收"的双保险。
+加上 CSV 末尾的 REVIEW 行（整体验收），就形成了"微观闭环 + 宏观验收"的双保险。新版本又多了一层 claim ledger，对照的是 spec 里的原始承诺，不是 agent 跑完后自己总结出来的漂亮话。
 
 ---
 
@@ -424,6 +442,9 @@ dev_state, review_initial_state, review_regression_state, git_state, owner, refs
 - **required_skills**：执行这条 issue 需要触发哪些 skill（比如前端任务填 `ui-ux-pro-max`）
 - **required_mcp**：验收时需要调用哪些 MCP 工具（前端必须有 `chrome-devtools`）
 - **notes**：执行过程中的标签记录，比如 `blocked:<原因>`、`evidence:<证据>`、`risk:<等级>`
+- **claim_ledger / claims**：从 approved doc 抽出来的承诺账本和当前 issue 覆盖的 claim id
+- **review_agent_mode / review_independence**：本轮 REVIEW 实际用了哪种独立审查能力，独立性强不强
+- **handoff**：给人看的交工单路径，通常是 `<csv>.handoff.md`
 
 ---
 
@@ -484,7 +505,9 @@ dev_state, review_initial_state, review_regression_state, git_state, owner, refs
   │                                        每条 issue 循环：
   │                                        开发 → 初始审查 → 回归审查 → 提交
   │                                                ↓
-  │                                        REVIEW 行：整体验收
+  │                                        REVIEW 行：整体验收 + 交工单
+  │                                                ↓
+  │                                        review.md / handoff.md / claims.json
   │                                                ↓
   │                                        全部关闭 = 任务完成
   │

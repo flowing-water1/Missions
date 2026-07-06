@@ -53,9 +53,12 @@ CSV 可能来自两种位置：
 
 `REVIEW-*` 行还必须满足：
 
-- 已执行与主 agent 同模型的 sub-agent 愿景 review；若当前环境不支持 sub-agent，已记录受限验收并执行独立上下文 fallback review
+- 已执行最强可用的独立愿景 review：优先 direct `spawn_agent`，其次 `codex exec` 独立同模型 reviewer，最后才是受限 fallback
+- review log 和 CSV `notes` 已记录 `review_agent_mode:<mode>`、`review_independence:<strong|medium|weak>`、`claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:<complete|gaps|unknown>`、`review_result:<result>`
 - review 结论已经写入 review log
+- 已产出 human handoff（`<csv-path-without-.csv>.handoff.md`），且 CSV `notes` 已记 `handoff:<path>`（或生成失败时记 `handoff:generation_failed <reason>` 并产出兜底文档）
 - 若发现缺口，已追加 follow-up issue 和下一轮 `REVIEW-(N+1)`
+- 若上轮是 `limited_review` 且只剩等待独立 review 能力变化的 rerun 行，不得重复追加同类 `REVIEW-*` 行
 
 # Issue 选择规则
 
@@ -68,6 +71,8 @@ CSV 可能来自两种位置：
 `REVIEW-*` 行只在它之前的所有非 review 行都闭环后执行。
 
 如果 `REVIEW-N` 追加了 follow-up issue 和 `REVIEW-(N+1)`，则 `REVIEW-N` 自己正常闭环；执行器继续后续 follow-up issue，之后再执行新的 review 行。不要让旧 review 行保持挂起，也不要回头重开旧 review 行。
+
+如果 `REVIEW-N` 的 `notes` 包含 `retry_when:independent_review_capability_changes`，只有当本轮能使用比该行记录的上一轮模式更强的 review 能力时才选择它；否则把它视为等待外部能力变化的 blocker，不要立刻重跑并追加新的 review 行。
 
 ## 再选最高价值项
 
@@ -198,6 +203,7 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 - 若前面仍有未完成的普通 issue，先跳过当前 review 行，继续普通 issue
 - review 不实现功能；review 只审计、记录、追加可执行工作
 - review 行必须包含任务专属 claim/evidence 检查项；如果 `review_regression_requirements` 仍是纯通用套话，先回读 `source_doc`、当前 CSV 和交付证据，补齐该行后再执行 review
+- 若任意行 `notes` 包含 `claims:CLAIM-*` 但没有可读的 `claim_ledger:<path>`，CSV 不完整；先补齐 `<csv-basename>.claims.json` 并写回 `claim_ledger`，不得把 claim id 当作可审计证据
 
 ## Review 输入
 
@@ -205,6 +211,7 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 
 - 批准文档或计划文档
 - 当前 CSV 的全部行和状态
+- claim/evidence ledger JSON：源文档中可验证承诺、对应 issue、生产路径、证据等级、受限项；路径来自 CSV notes 的 `claim_ledger:<path>`
 - 当前代码 diff / commit 记录
 - 测试与 MCP 证据
 - 交付物中的声明：文件名、函数名、测试名、metadata、报告、CSV notes、状态更新和 commit message
@@ -214,13 +221,207 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 
 ## Review 执行
 
-1. 调用与主 agent 同模型的独立 sub-agent 做愿景验收 review。
-2. sub-agent prompt 必须明确写入：使用与主 agent 相同的模型；只基于批准文档或原始请求、CSV、diff/commit、测试/MCP 证据、交付物声明和 review log；不要信任主 agent 的结论性总结；必须检查声明与证据等级是否一致，尤其是替代验证是否被包装成原目标通过。
-3. 如果当前运行环境不支持 sub-agent，必须在 review log 和 CSV `notes` 记录 `validation_limited:same-model sub-agent unavailable`；可以执行一次独立上下文 fallback review，但不得声称已经完成 sub-agent review。
-4. 输出结论必须分为两类：
+### Review capability 阶梯
+
+按顺序选择第一条可执行路径，并把选择结果写入 review log 与 CSV `notes`：
+
+| 优先级 | 模式 | 记录值 | 独立性 | 要求 |
+|--------|------|--------|--------|------|
+| 1 | 当前会话 direct `spawn_agent` + `wait` | `review_agent_mode:direct-spawn-agent` | `review_independence:strong` | 子 agent 与主 agent 同模型；prompt 不包含主 agent 结论 |
+| 2 | `codex exec --ephemeral --json --skip-git-repo-check --sandbox read-only [-m <current-model>]` | `review_agent_mode:codex-exec-subagent` 或 `review_agent_mode:codex-exec-independent` | `review_independence:strong` | 优先让 exec 会话再 spawn 一个 reviewer；不可 spawn 时由 exec 会话独立 review；能确认当前模型时显式传 `--model` |
+| 3 | `codex review` | `review_agent_mode:codex-review-diff-only` | `review_independence:medium` | 只能作为代码 diff 补充；仍需主流程检查 spec/CSV/claim ledger |
+| 4 | 主会话 fallback | `review_agent_mode:main-session-fallback` | `review_independence:weak` | 只允许在前 3 项都不可用时使用；必须写 `validation_limited:independent review unavailable` |
+
+若存在 `scripts/run_vision_review.py`，优先用它执行第 2 项，避免手写复杂命令。
+
+脚本用法（路径相对本 skill 目录）：
+
+```bash
+python scripts/run_vision_review.py \
+  --csv <csv-path> \
+  --source-doc <source-doc-path> \
+  --claim-ledger <claim-ledger-json-path> \
+  --review-log <review-log-path> \
+  --handoff <csv-path-without-.csv>.handoff.md \
+  --workdir <repo-root> \
+  --model <current-model>
+```
+
+脚本成功时输出 review JSON；把 JSON 摘要写入 review log，并把 `review_agent_mode` / `review_independence` / `review_actual_model` / `claim_coverage` / `claim_coverage_status` / `review_result` / 必要的 `validation_limited` 写入 CSV `notes`。脚本失败不等于 review 完成：记录失败原因后继续尝试下一阶能力。
+
+### Reviewer prompt 硬要求
+
+reviewer prompt 必须明确写入：
+
+- 使用与主 agent 相同的模型；若无法确认，记录实际模型和 `validation_limited:model parity unknown`
+- **模型能力门槛（高风险产出专用）**：reviewer 与 handoff 生成属于高风险产出（结论要喂给机械验收、错了影响闭环判断），承担这类活的 spawn-agent / 子 reviewer 必须用与主模型同档、或最多低一个推理强度的模型；禁止用更弱的小模型（如 mini 档）跑 reviewer。低风险只读/汇总类 spawn 不受此限。实际模型必须写入 `review_actual_model`，弱于门槛时记 `validation_limited:reviewer model below threshold` 并降级为 `limited_review`。
+- 只基于批准文档或原始请求、CSV、claim/evidence ledger、diff/commit、测试/MCP 证据、交付物声明和 review log
+- 不信任主 agent 的结论性总结
+- 不为了找问题而找问题；只有可证伪差距才算 gap
+- 每个 gap 必须包含 `source_ref`、`evidence_ref`、`why_it_matters`、`suggested_followup_issue`
+- 必须检查声明与证据等级是否一致，尤其是替代验证是否被包装成原目标通过
+
+输出结论必须分为三类：
    - `vision_met`: 已达成批准文档愿景
    - `gaps_found`: 仍有差距
-5. 将本轮结论写入 `<csv-path-without-.csv>.review.md`，与 CSV 同目录。
+   - `limited_review`: 独立 review 不可用或证据不足，不能给强通过结论
+
+将本轮结论写入 `<csv-path-without-.csv>.review.md`，与 CSV 同目录。
+
+## Human Handoff 产物
+
+REVIEW 行执行后，必须产出一份面向人类的交接文档 `<csv-path-without-.csv>.handoff.md`，与 CSV 同目录同前缀。
+
+### 定位
+
+handoff 是**施工交工单**——用户隔一段时间回来打开它，能还原"这轮干了什么、干成什么样、还剩什么"的完整画面，不需要翻 CSV、不需要翻 claims.json、不需要翻 git log。
+
+它与 review.md 分工不同：
+
+| 文件 | 读者 | 目的 | 写法 |
+|------|------|------|------|
+| `review.md` | reviewer / 下一轮 review / agent | 证明审过什么、有没有 gap | 结构化审计日志，可以用内部编号 |
+| `handoff.md` | 人（决策者） | 跨 session 一眼看懂做了什么、没做什么、下一步 | 跟 spec 同风格的大白话叙事 |
+
+### 内容结构（必须按此顺序）
+
+#### 第一层：总结（3 秒读完）
+
+一段话，用大白话说清楚：
+- 这轮执行的是哪篇 spec / 设计文档
+- spec 里承诺的核心能力，现在整体兑现到什么程度
+- 有没有降级或阻塞
+
+示例风格：
+
+> 本轮实现了 Memory Foundation 设计里的五项核心能力中的四项。MemoryRecord 入库、状态机流转、Consolidator 事件消费、检索注入都已完成并通过测试。L3 playbook 自动提炼降级为 proposed-only，因为多证据融合算法 spec 没给具体规则，当前只标记 eligibility 不自动 activate。
+
+#### 第二层：spec 目标逐条对账（30 秒浏览）
+
+以 spec 定义的能力/目标为单位（不是 CSV 行号），用表格或编号清单列出每项：
+
+| spec 目标 | 状态 | 实际效果 | 备注 |
+|-----------|------|----------|------|
+| 用 spec 自己的语言描述这项能力 | 完成 / 部分完成 / 降级 / 未开始 | 一句话说改完之后系统行为有什么不同 | 如果降级或未完成：为什么、差什么 |
+
+规则：
+- 目标描述从 spec 文档提取，用 spec 自身的表达方式（不是你自己编的抽象）
+- 但如果 spec 原文太长或太散文化，提炼为一句话
+- "实际效果"必须从用户/产品视角写，不是从代码视角——说"搜索现在能找到联系人邮箱了"而不是"research_contacts 返回非空 list"
+
+#### 第三层：施工细节
+
+按模块或功能区域组织（不是按 CSV 行号），每块覆盖以下角度（有什么写什么，不强制每块都写全）：
+
+- **改了什么**：碰了哪些文件/函数，改之前怎样、改之后怎样
+- **行为场景**：给一个具体的用户操作场景说明效果。格式："你在前端做 X → 系统现在会 Y → 以前是 Z"。让读者有画面感，能直接去试
+- **踩了什么坑**：执行过程中发现的问题、根因是什么、怎么修的
+- **做了什么决策**：spec 没明确说但执行时必须选择的点，选了什么、为什么
+- **意外发现**：spec 没预料到但执行时撞上的东西（设计缺口、隐含假设、产品疑问）。这类信息对 spec 作者特别重要
+- **质量判断**：这块代码是扎实的还是凑合能用的？哪里是薄弱点、后续可能还要投入？诚实评估
+- **集成影响**：这次改动对已有功能的副作用——碰了什么共享接口、改了什么公共逻辑、可能影响哪些既有行为
+- **产品洞察**：站在实现者角度看到的产品设计问题或改进机会。spec 阶段想不到的东西，实操才能发现
+
+用对照表或箭头流程图让变更可视化，示例：
+
+```text
+改之前：聊天 runtime 没有注入 store → remember_user_memory 报错
+改之后：main.py:112 暴露 store → chat.py:172 注入 → 工具正常写入
+```
+
+```text
+行为场景：你在聊天里说"记住，报价加 5%"
+→ 系统调用 remember_user_memory 写入 /memories/sop/pricing.md
+→ 下次新对话问"我的报价规矩是什么"，系统自动读取并回答
+→ 以前：工具报错 "store is required in RunnableConfig.configurable"
+```
+
+**数据流 / 架构变更必须配 mermaid 图**
+
+当本轮变更命中以下任一情形，第三层必须额外配 mermaid 图，而不是只用文字描述：
+
+- 数据流经多层（请求 → 中间件 → 业务 → 数据层）发生改变
+- 模块/文件之间的调用关系被新增、删除或改向
+- 架构边界调整（职责从 A 搬到 B、某层被降级或升格）
+
+规则：
+
+- **最多两张**：一张"改之前"、一张"改之后"，让读者用 diff 视角一眼看出变更骨架。只动一处时画一张即可。
+- 图只画与本轮变更相关的节点和边，不画整个系统全景——全景会淹没变更点（与"靶向展开：一条链不答一张图"一致）。
+- 图必须落点到变更：改后图里要能指出"哪个节点/哪条边是这轮动的"，用标签或虚线标出来。
+- 纯文案、单函数内部逻辑、不涉及跨文件/跨层关系的改动，不强制画图——数据源薄就如实写薄，不为凑可视化硬画（与下方风格硬规则第 6 条一致）。
+- **降级**：mermaid 语法写不出或渲染失败时，回退到上面的 ASCII 箭头块，不阻塞 handoff 落盘、不阻塞 mission 闭环（handoff 永远不比代码交付优先）。
+
+示例（改后数据流，虚线 = 本轮新增的边）：
+
+```mermaid
+flowchart LR
+    A[main.py:112 暴露 store] --> B[chat.py:172 注入]
+    B -.本轮新增.-> C[remember_user_memory 正常写入]
+```
+
+#### 第四层：验证情况
+
+- 跑了什么测试、结果如何（精简，一两行够了）
+- 哪些验证是降级的（没跑真实服务、缺凭证等），如实说
+- 不要把这部分当主角——前三层才是重点
+
+#### 第五层：后续可操作
+
+- **还剩什么**：未完成项、需要产品决策的点、已知限制
+- **阻塞/配置**：如果有需要用户动手的事（配置凭证、启动服务、审批、购买），明确列出解除条件
+- **怎么复现**：如果用户想自己验证，给完整的 E2E 步骤（启动什么、输入什么、期望看到什么）
+- **去哪看**：如果有可观测数据（监控面板、trace 系统、日志、DB 查询），告诉用户地址和过滤条件
+
+这一层是泛用的——有什么写什么，没有就不写。不要硬编码特定工具名称。
+
+### 风格硬规则
+
+1. **以 spec 目标为锚**：结构跟着 spec 走，不跟着 CSV 行号走，不跟着 CLAIM 编号走
+2. **自包含**：不引用 CLAIM-XXX 编号，不说"见 claims.json"。所有信息必须内联展开，读者不需要打开任何其他文件
+3. **跟 spec 同风格**：用对照表、结论句、箭头流程图或 mermaid 图（数据流/架构变更优先 mermaid）。先说结论再说细节。术语第一次出现时用括号解释它是什么
+4. **大白话优先**：先说产品效果（"用户记忆现在跨项目可读了"），再说技术路径（`user_memory.py:51 namespace 没有 project_id`）
+5. **不写审计话术**：禁止 "scope checked" / "evidence checked" / "claim coverage" / "vision_met" 这类 review 模板用语。这些属于 review.md，不属于 handoff
+6. **详细但不冗余**：每项覆盖完整，但每条精炼。同一事实不换三种说法重复。数据源薄就如实写薄，不编造篇幅
+7. **诚实标注不确定性**：降级了就说降级了，没验证就说没验证。不用漂亮话包装
+
+### 生成规则
+
+- 走脚本（capability 阶梯第 2 项）时，传 `--handoff <path>`，让 reviewer 在同一次 pass 里直接产出 `handoff_markdown`，脚本写盘为草稿。
+- 走 direct `spawn_agent`（第 1 项）时，reviewer prompt 必须额外要求返回 `handoff_markdown`，并把上述内容结构和风格硬规则完整传入 reviewer prompt，主 agent 接收为草稿。
+- 走 weak fallback（第 4 项，主会话自审）时，handoff 顶部必须写 `WARNING: self-review only, NOT independently verified`，独立性标签写 `weak`，不得让自评看起来像独立结论。
+- handoff 是**只读派生产物**：内容来自 source doc / CSV / review JSON / 代码实际状态，禁止手工编辑；要改内容就重跑 review 重新生成。
+- handoff 内容硬约束：每句话必须可追溯到上述数据源，禁止用固定模板或漂亮话填充篇幅（与项目硬门禁"不得用输出修补伪装能力"一致）；数据源薄就如实写薄，不许编。
+- 生成后在 REVIEW 行 `notes` 追加 `handoff:<path>`。
+- **落盘后必须跑结构 lint**（机械验收，不信 reviewer 自报，对齐 superpowers "看机器证据"原则）：
+  - 运行 `python <skill-dir>/scripts/lint_handoff.py <handoff-path>`。
+  - lint 卡得宽松——只查骨架是否走通 template（标题、独立性头、五层 `##` 至少命中 2 个、对账表、无审计黑话），不审内容质量。出现规范化结构基本就意味着 reviewer 走通了。
+  - 退出码 0 = 通过，正常闭环。
+  - 退出码 1 = 残件（如被压成几段摘要）：**重生成一次** handoff，再 lint；仍失败则在 `notes` 记 `handoff:lint_failed <缺项>` 后放行——不阻塞 mission 闭环（handoff 永远不比代码交付优先），但留下可见的不合格标记，不再静默接受。
+
+### humanizer-zh 后处理（必须）
+
+reviewer 产出的 `handoff_markdown` 是草稿，落盘前**必须**经过 humanizer-zh 处理。目的是去除 AI 生成痕迹，让文档读起来像人写的。
+
+流程：
+
+1. reviewer 产出 `handoff_markdown` 草稿（信息完整性由 reviewer 保证）
+2. 主 agent 调用 `humanizer-zh` skill 对草稿进行语言润色
+3. 润色后的版本才是最终 handoff，写入 `<csv-path-without-.csv>.handoff.md`
+
+润色规则以 humanizer-zh skill 本身为准。
+
+若 humanizer-zh 不可用（skill 未安装或调用失败）：
+- 不阻塞落盘——直接写入草稿版本
+- 在 REVIEW 行 `notes` 追加 `handoff_humanized:false`
+
+### handoff 生成失败的降级（反卡死）
+
+若脚本 / reviewer 未能产出 `handoff_markdown`（输出截断、JSON 不合法等）：
+
+- **不阻塞 mission 闭环**——handoff 永远不能比代码交付优先级高，它是辅助产物。
+- 在 REVIEW 行 `notes` 记 `handoff:generation_failed <reason>`。
+- 主 agent 用 review JSON + CSV + 代码现有数据，按上述内容结构手动渲染一份兜底 handoff，顶部标 `WARNING: auto-generation failed, rendered by main agent as fallback`。
 
 ## 发现差距时
 
@@ -253,6 +454,7 @@ REVIEW-02
 - 缺少 agent 无法获取的外部凭证、账号、权限、付费决策、法律/安全/业务决策
 - 必需的第三方或人工动作位于工作区外，agent 无法完成
 - 继续执行会要求伪造证据、凭证、数据或用户意图
+- 独立 review 的强/中路径都不可用，当前 CSV 只剩 `retry_when:independent_review_capability_changes` 的 rerun review 行，继续会重复追加同类 review 行
 
 其他问题都必须继续：
 
@@ -282,12 +484,14 @@ REVIEW-02
 ```markdown
 ## REVIEW-N
 - Source doc: <path>
-- Review agent: same-model sub-agent | fallback independent-context
+- Review agent: direct-spawn-agent | codex-exec-subagent | codex-exec-independent | codex-review-diff-only | main-session-fallback
+- Review independence: strong | medium | weak
 - Scope checked: <goals/non-goals/acceptance areas>
 - Evidence checked: <commits/tests/MCP/logs>
-- Claim/evidence alignment: matched | mismatches found
+- Claim coverage: complete | gaps | unknown
+- Claim/evidence alignment: matched | mismatches found | limited
 - Limited validation honestly reported: yes | no | not_applicable
-- Result: vision_met | gaps_found
+- Result: vision_met | gaps_found | limited_review
 - Gaps: <none or bullet list>
 - Follow-up issues added: <none or ids>
 - Assumptions: <none or bullet list>
@@ -297,10 +501,11 @@ REVIEW-02
 
 ## Review 行闭环
 
-`REVIEW-N` 只有在 review log 已写入后才能完成：
+`REVIEW-N` 只有在 review log 已写入，且 handoff.md 已生成（或已记 `handoff:generation_failed` 并产出兜底）后才能完成：
 
 - 若 `vision_met`：标记 `REVIEW-N` 完成，若无其他未完成行则结束 CSV
 - 若 `gaps_found`：追加 follow-up issue 和 `REVIEW-(N+1)` 后，标记 `REVIEW-N` 完成并继续
+- 若 `limited_review` 且没有可执行 gap：标记当前 review 行完成，但必须追加 `REVIEW-(N+1)`；新行 `notes` 写 `blocked:waiting independent review capability; retry_when:independent_review_capability_changes; previous_review_mode:<mode>`，`acceptance_criteria` 要求在更强 independent review 可用时重跑；不得把 limited 结论写成 `vision_met`，也不得立即选择新行造成无限 review 循环
 - 若存在 human-required blocker：记录 blocker，保持 `git_state=未提交`，停止并请求最小必要输入
 
 # 反暂停护栏
@@ -419,6 +624,9 @@ REVIEW-02
 | "工作区有用户的未提交改动和我的改动混在一起" | 这不是停止理由。用 `git stash` 或分开 `git add` 管理边界，继续推进。 |
 | "review 发现架构问题，先问用户" | 只有人类不可替代才停。写 assumption/risk，追加 follow-up，继续。 |
 | "review 行没写同模型 sub-agent 也可以执行" | 不可以。先补齐 `review_agent:same-model-sub-agent` 和同模型 sub-agent 要求，再执行 review。 |
+| "当前会话没有 `spawn_agent`，所以只能主会话自审" | 不对。先尝试 `codex exec --ephemeral --json --skip-git-repo-check --sandbox read-only` 独立 reviewer；失败后才能 weak fallback。 |
+| "`codex review` 已经跑过，所以愿景 review 完成" | 不够。`codex review` 只审 diff，不能替代 spec/CSV/claim ledger 对账。 |
+| "fallback review 也可以写 vision_met" | 不可以。weak fallback 只能写 `limited_review`，除非后续独立 review 给出强结论。 |
 | "替代测试跑绿了，可以说原目标通过" | 不可以。替代测试只能证明替代范围；原目标没验证就写受限验收。 |
 | "名字/报告写得强一点没关系" | 不可以。文件名、测试名、metadata、报告和状态更新都是声明，必须和实际行为一致。 |
 | "REVIEW 行是通用模板，也能审" | 不够。先从源文档/原始任务补齐任务专属 claim/evidence 检查项。 |

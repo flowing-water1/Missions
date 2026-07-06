@@ -13,7 +13,7 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 | `id` | `<GROUP>-<seq>` | 如 `SPEC-01`（approved doc）、`PLAN-01`（approved plan）或 `01`（long task） |
 | `priority` | `P0\|P1\|P2` | |
 | `phase` | `1\|2\|3...` | 执行阶段序号 |
-| `area` | `backend\|frontend\|both\|infra` | |
+| `area` | `backend\|frontend\|both\|infra\|review` | `REVIEW-*` 行固定使用 `review` |
 | `title` | 一句话标题 | 动词开头，简洁 |
 | `description` | 1-2 句 | 边界说明，不写实现细节 |
 | `acceptance_criteria` | 分号分隔 | 可验证条件；格式 `WHEN X THEN Y; ref: file:line` |
@@ -68,6 +68,19 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 | `decision_debt:<note>` | 未阻塞执行、但需要在 review log 中留痕的决策债 |
 | `review_kind:vision` | `REVIEW-*` 行的文档愿景验收标记 |
 | `review_agent:same-model-sub-agent` | `REVIEW-*` 行必须使用与主 agent 同模型的 sub-agent 审查 |
-
+| `review_agent_mode:<mode>` | 实际 review 执行模式：`direct-spawn-agent` / `codex-exec-subagent` / `codex-exec-independent` / `codex-review-diff-only` / `main-session-fallback` / `pending` |
+| `review_independence:<level>` | review 独立性：`strong` / `medium` / `weak` / `pending` |
+| `review_actual_model:<model>` | reviewer 实际模型；无法确认时写 `unknown` 并同时写 `validation_limited:model parity unknown` |
+| `claim_ledger:<path>` | 持久化 claim/evidence ledger JSON 路径；任何 `claims:CLAIM-*` 都必须能在该 JSON 中找到定义 |
+| `claim_coverage:<covered>/<total>` | 源文档可验证 claim 覆盖率 |
+| `claim_coverage_status:<status>` | review 对 claim 覆盖的判断：`pending` / `complete` / `gaps` / `unknown` |
+| `claims:<CLAIM-001,CLAIM-002>` | 当前 issue 覆盖的 claim id 列表 |
+| `evidence_level:<level>` | 当前 issue 最高证据等级：`real_e2e` / `integration` / `unit` / `static` / `mock_allowed` / `limited_allowed` |
+| `mock_allowed:<reason>` | 源文档明确允许 mock/fake/dry-run/static 证据的原因 |
+| `limited_allowed:<reason>` | 源文档明确允许受限验收的原因 |
+| `production_path:<status>` | 是否覆盖生产路径：`covered` / `not_required` / `deferred` / `gap` |
+| `out_of_scope:<section>;<reason>` | 源文档中明确不在本轮执行范围内的承诺或章节 |
+| `review_result:<result>` | review 结论：`vision_met` / `gaps_found` / `limited_review` |
+| `handoff:<path>` | 人类交接文档路径；`handoff:generation_failed <reason>` 表示自动生成失败、已用兜底渲染；`handoff:lint_failed <缺项>` 表示结构 lint 未通过、重生成后仍残缺、已留标记放行 |
 | `source_doc:<path>` | 生成 CSV 的批准文档路径 |
 | `pr:<id>` | 关联 PR |
