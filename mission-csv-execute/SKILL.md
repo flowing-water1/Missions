@@ -207,7 +207,7 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 
 ## Review 输入
 
-同模型 sub-agent review 必须基于以下材料：
+独立愿景 review 必须基于以下材料：
 
 - 批准文档或计划文档
 - 当前 CSV 的全部行和状态
@@ -623,7 +623,7 @@ REVIEW-02
 | "前 N 条已闭环，先整齐收口再继续" | 这是干净边界谬误。partial completion 是最脏的状态——强制恢复上下文比继续执行代价高得多。混合汇报"已完成"和"进行中"完全正常。 |
 | "工作区有用户的未提交改动和我的改动混在一起" | 这不是停止理由。用 `git stash` 或分开 `git add` 管理边界，继续推进。 |
 | "review 发现架构问题，先问用户" | 只有人类不可替代才停。写 assumption/risk，追加 follow-up，继续。 |
-| "review 行没写同模型 sub-agent 也可以执行" | 不可以。先补齐 `review_agent:same-model-sub-agent` 和同模型 sub-agent 要求，再执行 review。 |
+| "review 行没写 review 模式也可以执行" | 不可以。先补齐 `review_agent_mode:pending`、`review_independence:pending` 和任务专属 claim/evidence 条件，再执行 review。 |
 | "当前会话没有 `spawn_agent`，所以只能主会话自审" | 不对。先尝试 `codex exec --ephemeral --json --skip-git-repo-check --sandbox read-only` 独立 reviewer；失败后才能 weak fallback。 |
 | "`codex review` 已经跑过，所以愿景 review 完成" | 不够。`codex review` 只审 diff，不能替代 spec/CSV/claim ledger 对账。 |
 | "fallback review 也可以写 vision_met" | 不可以。weak fallback 只能写 `limited_review`，除非后续独立 review 给出强结论。 |

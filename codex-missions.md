@@ -298,7 +298,7 @@ SuperPower 的地址：[obra/superpowers: An agentic skills framework & software
 
 ## 5. 安装 Mission Skills 包
 
-也是很简单，拉下来放到 `C:\Users\用户名\.codex\skills` 中就行。
+也是很简单，拉下来之后只把 `mission*` 这些 skill 目录放到 `C:\Users\用户名\.codex\skills` 中就行。仓库根目录的 README、`codex-missions.md`、AGENTS/CLAUDE 示例不用拷进 skills 目录。
 
 整个 skills 包同样是参考 superpower 的路由思路：
 
@@ -306,6 +306,8 @@ SuperPower 的地址：[obra/superpowers: An agentic skills framework & software
 - **mission-approved-doc** 负责生成 csv 文件
 - **mission-csv-execute** 负责执行 csv 文件
 - **mission-recovery** 负责恢复执行（因为在执行过程中，可能因为各种原因中断，所以有了这个恢复，就算 key 额度不够，或者不稳定也不用太担心）
+
+其中 `mission-csv-execute/scripts/` 现在也属于包的一部分，里面有三个辅助脚本：`run_vision_review.py` 跑独立愿景 review，`validate_claim_ledger.py` 校验 claim ledger，`lint_handoff.py` 检查交工单骨架。安装时不要漏掉这个目录。
 
 这里面我觉得需要提一点，这也是"少返工"的关键点：**在 csv 的末尾加一条 review 的 issue**。对！就这么简单！但是现在这条 review 已经不只是"看一眼有没有做完"了。
 
@@ -392,8 +394,16 @@ docs/
         └── 你和 claude 讨论的 spec 文档
 
 issues/
-├── claude 生成的 csv 文件
-└── 在执行过程中，codex 可能会产出的 review 工作日志
+├── 2026-xx-xx_xx-xx-xx-xxx.csv          # approved-doc 生成的任务状态源
+├── 2026-xx-xx_xx-xx-xx-xxx.claims.json  # 源文档承诺账本
+├── 2026-xx-xx_xx-xx-xx-xxx.review.md    # 给 reviewer/agent 看的审计日志
+└── 2026-xx-xx_xx-xx-xx-xxx.handoff.md   # 给人看的施工交工单
+
+.mission/
+├── 2026-xx-xx-xxx.csv                    # long-task 生成，本地恢复用，不默认提交
+└── xxx/
+    ├── log.md                            # 可选决策日志
+    └── raw/                              # 可选外部数据缓存
 ```
 
 ---
@@ -427,7 +437,9 @@ issues/
 
 ## 9. CSV 核心字段一览
 
-完整的 CSV 有 19 个字段，这里列出最关键的几个，帮助你理解执行过程：
+完整的 CSV 有 19 个字段，固定表头只由 `mission-csv-execute/csv-schema.md` 定义。`mission-approved-doc/doc-field-mapping.md` 只是把 spec 映射到这 19 列，不是另一套 schema。
+
+这里列出最关键的几个，帮助你理解执行过程：
 
 ```
 id, priority, phase, area, title, description, acceptance_criteria, test_mcp,
@@ -444,6 +456,7 @@ dev_state, review_initial_state, review_regression_state, git_state, owner, refs
 - **notes**：执行过程中的标签记录，比如 `blocked:<原因>`、`evidence:<证据>`、`risk:<等级>`
 - **claim_ledger / claims**：从 approved doc 抽出来的承诺账本和当前 issue 覆盖的 claim id
 - **review_agent_mode / review_independence**：本轮 REVIEW 实际用了哪种独立审查能力，独立性强不强
+- **review_result / review_actual_model**：REVIEW 执行后回填的结论和实际模型；生成 CSV 时通常还是空或 pending
 - **handoff**：给人看的交工单路径，通常是 `<csv>.handoff.md`
 
 ---

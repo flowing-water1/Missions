@@ -67,7 +67,7 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 | `assumption:<note>` | 为继续闭环而采用的合理假设 |
 | `decision_debt:<note>` | 未阻塞执行、但需要在 review log 中留痕的决策债 |
 | `review_kind:vision` | `REVIEW-*` 行的文档愿景验收标记 |
-| `review_agent:same-model-sub-agent` | `REVIEW-*` 行必须使用与主 agent 同模型的 sub-agent 审查 |
+| `review_agent:same-model-sub-agent` | 兼容旧 CSV 的意图标签：要求优先使用同模型独立 reviewer；实际执行方式以 `review_agent_mode` 为准 |
 | `review_agent_mode:<mode>` | 实际 review 执行模式：`direct-spawn-agent` / `codex-exec-subagent` / `codex-exec-independent` / `codex-review-diff-only` / `main-session-fallback` / `pending` |
 | `review_independence:<level>` | review 独立性：`strong` / `medium` / `weak` / `pending` |
 | `review_actual_model:<model>` | reviewer 实际模型；无法确认时写 `unknown` 并同时写 `validation_limited:model parity unknown` |
@@ -84,3 +84,9 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 | `handoff:<path>` | 人类交接文档路径；`handoff:generation_failed <reason>` 表示自动生成失败、已用兜底渲染；`handoff:lint_failed <缺项>` 表示结构 lint 未通过、重生成后仍残缺、已留标记放行 |
 | `source_doc:<path>` | 生成 CSV 的批准文档路径 |
 | `pr:<id>` | 关联 PR |
+
+### REVIEW notes 分阶段
+
+`REVIEW-*` 行生成时只需要写入初始标签：`review_kind:vision`、`source_doc:<path>`、`claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`。`review_agent:same-model-sub-agent` 可保留为兼容旧 CSV 的意图标签，但不能替代 `review_agent_mode`。
+
+`review_actual_model`、`review_result`、`handoff`、`handoff_humanized`、`validation_limited` 等标签由 `mission-csv-execute` 执行 REVIEW 后回填。生成阶段不预填这些标签，不算 schema 缺失。

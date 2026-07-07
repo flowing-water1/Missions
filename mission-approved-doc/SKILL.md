@@ -88,6 +88,8 @@ description: Use when the input is a user-approved design doc or implementation 
 
 ## Phase 3：生成 CSV
 
+`mission-csv-execute/csv-schema.md` 是唯一固定 CSV schema。`mission-approved-doc` 只负责把批准文档映射成这套 19 列表头下的行数据，不定义第二套表头。
+
 生成文件：`issues/<YYYY-MM-DD_HH-mm-ss>-<topic>.csv`
 
 关键规则：
@@ -127,6 +129,8 @@ claim_ledger:issues/<csv-basename>.claims.json; claims:CLAIM-001,CLAIM-002; clai
 
 `REVIEW-01` 是审计事件，不是普通实现任务。
 
+下表只列 `REVIEW-01` 需要覆盖的字段取值，不是完整 CSV 表头。实际 CSV 仍必须包含 `csv-schema.md` 中的全部 19 列；未列出的状态字段按标准默认值初始化：`dev_state=未开始`、`review_initial_state=未开始`、`review_regression_state=未开始`、`git_state=未提交`、`owner=`。
+
 生成 `REVIEW-01` 时，先从批准文档中抽取用户真正承诺的结果，并写进 review 条件：
 
 - 若文档声明完成某个真实行为、真实副作用、真实集成、真实迁移、真实发送、真实同步、可见交互或端到端流程，review 条件必须检查证据是否支撑同等级声明
@@ -151,7 +155,9 @@ claim_ledger:issues/<csv-basename>.claims.json; claims:CLAIM-001,CLAIM-002; clai
 | `review_initial_requirements` | `Verify all prior non-review rows are closed before running this review.` |
 | `review_regression_requirements` | `Run strongest available independent vision review against approved doc goals, non-goals, claim/evidence ledger, acceptance criteria, delivered diff, validation evidence, prior review logs, and source-specific claim/evidence alignment checks.` |
 | `refs` | `<doc-path>:1` |
-| `notes` | `review_kind:vision; review_agent:same-model-sub-agent; review_agent_mode:pending; review_independence:pending; source_doc:<doc-path>; claim_ledger:issues/<csv-basename>.claims.json; claim_coverage:<X/Y>; claim_coverage_status:pending` |
+| `notes` | `review_kind:vision; review_agent_mode:pending; review_independence:pending; source_doc:<doc-path>; claim_ledger:issues/<csv-basename>.claims.json; claim_coverage:<X/Y>; claim_coverage_status:pending` |
+
+兼容旧 CSV 时可保留 `review_agent:same-model-sub-agent`，但它只是“优先使用同模型独立 reviewer”的意图标签。实际执行模式由 `mission-csv-execute` 写入 `review_agent_mode:<mode>`。
 
 ## Phase 4：生成后摘要
 

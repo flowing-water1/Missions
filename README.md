@@ -32,27 +32,27 @@
 
 ## Installation
 
-把整个仓库的 6 个 skill 目录拷进你的 skills 路径。
+把整个仓库里的 `mission*` skill 目录拷进你的 skills 路径。仓库根目录的 README、长文说明、AGENTS/CLAUDE 示例不用拷进 skills 目录。
 
 **Codex CLI**：`~/.codex/skills/`
 **Claude Code**：`~/.claude/skills/`（或项目级 `.claude/skills/`）
 
 ```bash
 # macOS / Linux — Codex
-git clone https://github.com/<you>/codex-missions.git
-cp -r codex-missions/mission* ~/.codex/skills/
+git clone https://github.com/flowing-water1/Missions.git
+cp -r Missions/mission* ~/.codex/skills/
 
 # macOS / Linux — Claude Code
-cp -r codex-missions/mission* ~/.claude/skills/
+cp -r Missions/mission* ~/.claude/skills/
 ```
 
 ```powershell
 # Windows — Codex
-git clone https://github.com/<you>/codex-missions.git
-robocopy codex-missions C:\Users\<你>\.codex\skills /E /XF README.md LICENSE
+git clone https://github.com/flowing-water1/Missions.git
+Copy-Item .\Missions\mission* "$env:USERPROFILE\.codex\skills\" -Recurse -Force
 
 # Windows — Claude Code
-robocopy codex-missions C:\Users\<你>\.claude\skills /E /XF README.md LICENSE
+Copy-Item .\Missions\mission* "$env:USERPROFILE\.claude\skills\" -Recurse -Force
 ```
 
 完成后对应 skills 目录里应该长这样：
@@ -62,6 +62,12 @@ mission/
 mission-doc-route/
 mission-approved-doc/
 mission-csv-execute/
+  csv-schema.md
+  test-mcp-mapping.md
+  scripts/
+    lint_handoff.py
+    run_vision_review.py
+    validate_claim_ledger.py
 mission-long-task/
 mission-recovery/
 ```
@@ -311,8 +317,10 @@ your-project/
 │           └── 2026-05-22-<topic>-design.md     # 与 Claude 讨论的 spec（手动写）
 │
 ├── issues/                                       # ← 提交到仓库
-│   ├── 2026-05-22_10-00-00-<topic>.csv          # approved-doc 生成
-│   └── 2026-05-22_10-00-00-<topic>.review.md    # vision review log
+│   ├── 2026-05-22_10-00-00-<topic>.csv          # approved-doc 生成的任务状态源
+│   ├── 2026-05-22_10-00-00-<topic>.claims.json  # 源文档承诺账本
+│   ├── 2026-05-22_10-00-00-<topic>.review.md    # vision review 审计日志
+│   └── 2026-05-22_10-00-00-<topic>.handoff.md   # 给人看的施工交工单
 │
 └── .mission/                                     # ← gitignored
     ├── 2026-05-22-<task>.csv                    # long-task 生成
@@ -323,7 +331,9 @@ your-project/
 
 ## CSV Schema 速览
 
-完整字段定义在 `mission-csv-execute/csv-schema.md` 和 `mission-approved-doc/doc-field-mapping.md`。关键字段：
+固定 CSV 表头只由 `mission-csv-execute/csv-schema.md` 定义。`mission-approved-doc/doc-field-mapping.md` 只说明批准文档如何映射到这套表头，不是第二套 schema。
+
+关键字段：
 
 | 字段                                                         | 说明                                                         |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
@@ -333,7 +343,7 @@ your-project/
 | `required_mcp`                                               | 必须实际调用的 MCP 工具（验收合同）                          |
 | `refs`                                                       | 至少 1 个 `path:line`                                        |
 | `dev_state` / `review_initial_state` / `review_regression_state` / `git_state` | 四状态闭环                                                   |
-| `notes`                                                      | `picked_reason` / `done_at` / `skills_used` / `mcp_used` / `evidence` / `risk` / `blocked` / `validation_limited` 等 |
+| `notes`                                                      | `picked_reason` / `done_at` / `skills_used` / `mcp_used` / `claim_ledger` / `review_agent_mode` / `review_result` / `handoff` / `evidence` / `risk` / `blocked` / `validation_limited` 等 |
 
 ## FAQ
 
@@ -353,7 +363,7 @@ A: openspec 生成的计划复杂，agent 容易跑偏。这套包用一个 spec
 A: `.mission/` 是本地恢复工件，含 timestamp 噪声，commit 进去没价值。`issues/` 才是正式任务，跟代码一起 review。
 
 **Q: REVIEW 行能跳过吗？**
-A: 不能。这是这套包"少返工"的关键——每个 CSV 末尾的 sub-agent 复审会拿源文档对齐实际交付，发现差距就追加 follow-up 直到 vision_met。
+A: 不能。这是这套包"少返工"的关键。每个 CSV 末尾的独立愿景 review 会拿源文档、CSV、claim ledger、测试证据和实际 diff 对账；发现差距就追加 follow-up，独立 review 不可用时只能写 `limited_review`，不能伪装成通过。
 
 **Q: 受限验收会不会被滥用？**
 A: SKILL.md 里有明确的判定 few-shots——缺依赖、本地服务没启动、E2E "太复杂" 这些都**不构成**受限验收理由；只有需要付费服务、外部凭证、人工审批这种客观不可达才行。

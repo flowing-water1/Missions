@@ -1,5 +1,7 @@
 # Approved Doc -> CSV 字段映射
 
+`mission-csv-execute/csv-schema.md` 是唯一固定 CSV schema。本文件只说明批准文档如何映射到那套 19 列表头，不定义第二套 CSV 表头。
+
 ## 适用输入
 
 - `docs/superpowers/specs/*.md`
@@ -108,12 +110,16 @@ claim_ledger:issues/<csv-basename>.claims.json; claims:CLAIM-001,CLAIM-004; evid
 
 `REVIEW-N` 行用于审计交付结果是否达成批准文档愿景。
 
+下列规则是 REVIEW 行的取值约束，不是完整 CSV schema。实际 CSV 仍必须包含 `csv-schema.md` 的全部 19 列；未列状态字段按标准默认值初始化。
+
 - `area` 固定为 `review`
 - `priority` 固定为 `P0`
 - `test_mcp` 固定为 `MANUAL`
 - `refs` 至少包含批准文档路径
 - `notes` 必须包含 `review_kind:vision`
-- `notes` 必须包含 `review_agent:same-model-sub-agent`、`claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`
+- 生成阶段的 `notes` 必须包含 `claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`
+- 执行阶段由 `mission-csv-execute` 回填 `review_actual_model:<model>`、`review_result:<result>`、`handoff:<path>` 等结果标签
+- `review_agent:same-model-sub-agent` 只是兼容旧 CSV 的意图标签，不再作为新 CSV 的必填 schema 字段；实际执行方式以 `review_agent_mode` 为准
 - `REVIEW-01` 由 CSV 生成阶段创建
 - `REVIEW-02` 及之后由执行阶段在发现缺口时追加
 
