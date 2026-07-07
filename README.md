@@ -4,6 +4,13 @@
 
 把一个需求扔给 agent，它会自己拆成 CSV、按四状态闭环跑、用独立 review 对照源文档验收，发现差距就追加 follow-up，最后写出给人看的交接文档再交还给你。配合 codex 的 `/goal` 用，断联不停、可 resume。
 
+**新版：**
+
+- 旧版codex面对review时不愿意启动sub-agent，反而只愿意用主agent跑的问题
+- 配合humanizer-zh这个skills，现在可以跟codex一起讨论spec文档了，效果也不错
+- 目前用codex生成csv也可以了，效果跟claude code差不了多少，可能就是20%的差距而已，现在对于spec文档的覆盖率是有指标的，所以生成的csv执行之后基本上能满足需求，不会漏了
+- 执行完毕之后，之前只能一直问AI了解情况，现在直接看handoff文档就能知道情况了。
+
 ## Features
 
 - **统一入口，自动路由** — 不管你给的是 CSV、md 文档、自然语言任务，还是一句 "continue"，`mission` 会判断走哪条路径
