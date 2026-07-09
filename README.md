@@ -4,20 +4,23 @@
 
 把一个需求扔给 agent，它会自己拆成 CSV、按四状态闭环跑、用独立 review 对照源文档验收，发现差距就追加 follow-up，最后写出给人看的交接文档再交还给你。配合 codex 的 `/goal` 用，断联不停、可 resume。
 
-**新版：**
+**新版说明：**
 
-- 旧版codex面对review时不愿意启动sub-agent，反而只愿意用主agent跑的问题
-- 配合humanizer-zh这个skills，现在可以跟codex一起讨论spec文档了，效果也不错
-- 目前用codex生成csv也可以了，效果跟claude code差不了多少，可能就是20%的差距而已，现在对于spec文档的覆盖率是有指标的，所以生成的csv执行之后基本上能满足需求，不会漏了
-- 执行完毕之后，之前只能一直问AI了解情况，现在直接看handoff文档就能知道情况了。
+- mission 产物现在改成目录化结构：approved doc 会生成到 `issues/<stem>/<stem>.csv`，long task 会生成到 `.mission/<stem>/<stem>.csv`。
+- CSV 同目录会放 claim ledger、review log、handoff 文档和 reviewer 原始输出；`claim_ledger:<path>`、`handoff:<path>` 这类相对路径也优先按 CSV 所在目录解析。旧版 `issues/*.csv` / `.mission/*.csv` 仍然兼容恢复和显式输入。
+- REVIEW 阶段不再只写“同模型 sub-agent”这一条路，而是按能力阶梯优先使用最强可用的独立 vision review，并记录 `review_agent_mode` 和 `review_independence`。
+- handoff 现在有 contract check：必须生成同名前缀的 `.handoff.md`，CSV REVIEW notes 必须记录 `handoff:<path>`，通过后写入 `handoff_contract:passed`；否则不能把本轮 review 说成 `vision_met`。
+- Codex 现在可以稳定从 spec 生成 CSV，并用 claim coverage 指标检查需求覆盖率；执行结束后直接看 handoff 就能知道做了什么、哪些完成了、哪里有限制。
 
 ## Features
 
 - **统一入口，自动路由** — 不管你给的是 CSV、md 文档、自然语言任务，还是一句 "continue"，`mission` 会判断走哪条路径
 - **CSV 四状态闭环** — 每条 issue 必须同时满足 `dev_state` / `review_initial_state` / `review_regression_state` / `git_state` 才算完，跳一步都不行
+- **目录化 Artifact Root** — 每个任务有自己的 artifact 目录，CSV、claims、review log、handoff 和 reviewer 原始输出放在一起，恢复和审计都更稳
 - **REVIEW 行 + 独立愿景验收** — CSV 末尾必有 `REVIEW-01`，优先用独立 reviewer 对齐源文档、CSV、claim ledger 和实际交付，发现差距追加 follow-up 和 `REVIEW-N+1`
 - **Claim/Evidence Ledger** — approved doc 会先抽取可验证承诺，落盘为 `*.claims.json`，CSV 只引用 claim id，避免 review 时只靠印象对账
 - **Human Handoff** — REVIEW 后生成 `<csv>.handoff.md`，用人能看懂的话说明做了什么、哪些目标兑现了、哪里降级了、怎么复现
+- **Handoff Contract Check** — handoff 落盘后会机械检查文件名、CSV REVIEW notes 和 Markdown 骨架；`vision_met` 必须同时有 `handoff_contract:passed`
 - **test_mcp + required_mcp 分离** — "怎么验证" 和 "用什么工具验证" 是两个维度；前者写策略，后者写执行合约，杜绝"跑个 smoke 就说通过了"
 - **声明-证据一致性硬门禁** — 不允许用 mock / fixture / dry-run / 字符串检查包装成"真实集成 / 真实副作用 / E2E 通过"
 - **受限验收机制** — 测试跑不起来不是免责卡，但客观不可达可以走受限验收，必须如实记录 `validation_limited` / `validation_gap` / `manual_test` / `mcp_evidence` / `risk`
@@ -30,8 +33,8 @@
 | ---------------------- | ---------------------------------------------------- | ----------------------------------- |
 | `mission`              | 总入口，判断输入类型，分派给子 skill                 | CSV / md / 任务描述 / 空（=resume） |
 | `mission-doc-route`    | 拿到 md 文档，判断走 approved-doc 还是 long-task     | `*.md`                              |
-| `mission-approved-doc` | 已批准的设计/计划文档 → `issues/*.csv` → 闭环执行    | 已批准的 md                         |
-| `mission-long-task`    | 复杂任务描述 → `.mission/*.csv` → 闭环执行（可恢复） | 自然语言任务                        |
+| `mission-approved-doc` | 已批准的设计/计划文档 → `issues/<stem>/<stem>.csv` → 闭环执行 | 已批准的 md                         |
+| `mission-long-task`    | 复杂任务描述 → `.mission/<stem>/<stem>.csv` → 闭环执行（可恢复） | 自然语言任务                        |
 | `mission-csv-execute`  | CSV 闭环执行引擎（强内核），四状态推到底             | `*.csv`                             |
 | `mission-recovery`     | 扫描未完成 CSV，定位断点，转发给执行器               | 无                                  |
 
@@ -72,8 +75,12 @@ mission-csv-execute/
   csv-schema.md
   test-mcp-mapping.md
   scripts/
+    check_handoff_contract.py
     lint_handoff.py
     run_vision_review.py
+    test_check_handoff_contract.py
+    test_run_vision_review_paths.py
+    test_validate_claim_ledger.py
     validate_claim_ledger.py
 mission-long-task/
 mission-recovery/
@@ -87,7 +94,7 @@ mission 自己就是入口。给它你的输入，它会自动判断走哪条路
 
 ```text
 # 1. 已经有 CSV
-mission @issues/2026-05-22-add-login.csv
+mission @issues/2026-05-22_10-00-00-add-login/2026-05-22_10-00-00-add-login.csv
 
 # 2. 已经有批准的设计文档
 mission @docs/superpowers/specs/2026-05-22-add-login-design.md
@@ -115,7 +122,7 @@ skill 触发方式因 agent 而异：
 hello
 
 # 2. 然后 /goal 包住 mission 输入
-/goal @issues/2026-05-22-add-login.csv
+/goal @issues/2026-05-22_10-00-00-add-login/2026-05-22_10-00-00-add-login.csv
 ```
 
 `/goal` 给 mission 加了三层 buff：
@@ -149,10 +156,10 @@ hello
 
 两条路径，最终都生成标准 CSV 喂给执行器：
 
-- **`mission-approved-doc`**：已批准的 design doc / plan → `issues/<timestamp>-<topic>.csv`，**随代码一起提交**
-- **`mission-long-task`**：自然语言任务 → `.mission/<timestamp>-<task-name>.csv`，**本地恢复用，不提交**
+- **`mission-approved-doc`**：已批准的 design doc / plan → `issues/<stem>/<stem>.csv`，**随代码一起提交**
+- **`mission-long-task`**：自然语言任务 → `.mission/<stem>/<stem>.csv`，**本地恢复用，不提交**
 
-`mission-approved-doc` 会先确认执行范围，再从源文档抽取 Claim/Evidence Ledger，写到 `issues/<csv-basename>.claims.json`。组件 issue 之外，还会为启动注册、consumer、agent tool、flow 注入点这类生产路径生成独立接线 issue，避免"模块写了但没人调用"。
+`mission-approved-doc` 会先确认执行范围，再从源文档抽取 Claim/Evidence Ledger，写到 CSV 同目录的 `<stem>.claims.json`。组件 issue 之外，还会为启动注册、consumer、agent tool、flow 注入点这类生产路径生成独立接线 issue，避免"模块写了但没人调用"。
 
 两条路径都强制在 CSV 末尾追加 `REVIEW-01`。REVIEW 行不能只写通用模板；它必须能回读源文档、CSV、claim ledger、测试证据和交付 diff。
 
@@ -194,7 +201,7 @@ Step 9  立刻下一条（不问、不停、不礼貌停顿）
 - `codex review` 只能作为 diff 补充，不能代替 spec / CSV / claim ledger 对账
 - 最后才允许主会话 fallback；fallback 只能写 `limited_review`，不能伪装成 `vision_met`
 
-review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档写到 `<csv-path-without-.csv>.handoff.md`。
+review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档写到 `<csv-path-without-.csv>.handoff.md`。handoff 落盘后还会跑 `check_handoff_contract.py`：文件名、CSV REVIEW notes 里的 `handoff:<path>`、Markdown 骨架都通过后，才会记录 `handoff_contract:passed`。如果 contract 失败，本轮不能写成 `vision_met`。
 
 结果分三类：
 
@@ -204,7 +211,7 @@ review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档
 
 ### 5. 恢复层（mission-recovery）
 
-扫描 `issues/*.csv` 和 `.mission/*.csv`，找到任何不满足四状态闭环的行，定位断点，转发给 `mission-csv-execute`。
+优先扫描 `issues/*/*.csv` 和 `.mission/*/*.csv`，并兼容旧版平铺的 `issues/*.csv` / `.mission/*.csv`。找到任何不满足四状态闭环的行后，定位断点并转发给 `mission-csv-execute`。
 
 会话挂了、context 被压缩、key 没额度、电脑重启，全都能 resume 回来。
 
@@ -226,7 +233,7 @@ review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档
 
 ### `mission-approved-doc`
 
-把已批准的 design doc → `issues/<timestamp>-<topic>.csv`。
+把已批准的 design doc → `issues/<stem>/<stem>.csv`。
 
 - **批准门**：未明确批准 → 硬停，不写代码
 - **原子性**：单 issue 必须可独立验证、独立提交；多个独立验收场景必须拆行
@@ -237,10 +244,10 @@ review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档
 
 ### `mission-long-task`
 
-把自然语言任务拆成 5-15 条 atomic issues → `.mission/<timestamp>-<task-name>.csv`。
+把自然语言任务拆成 5-15 条 atomic issues → `.mission/<stem>/<stem>.csv`。
 
 - 复杂 bug 先跑 `superpowers:systematic-debugging` 抓根因，再拆
-- 可选维护 `.mission/<task-name>/log.md` 做决策日志
+- 可选维护 CSV 同目录的 `log.md` 做决策日志
 - `.mission/` 默认 gitignored
 
 ### `mission-csv-execute`
@@ -294,7 +301,7 @@ review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档
   │
   ├─ Claude Code: brainstorming → spec.md（讨论方案）
   │        ↓
-  ├─ Claude Code: 转 issues/*.csv（落 CSV）
+  ├─ Claude Code: 转 issues/<stem>/<stem>.csv（落 CSV）
   │        ↓
   └─ Codex 或 Claude Code: mission @csv（闭环执行）
 ```
@@ -307,7 +314,7 @@ review log 写到 `<csv-path-without-.csv>.review.md`，给人看的交接文档
 
 ```text
 hello                                      # 先占位，第一条不能是 /goal
-/goal @issues/<timestamp>-<topic>.csv      # mission 自动路由到 csv-execute
+/goal @issues/<stem>/<stem>.csv            # mission 自动路由到 csv-execute
 ```
 
 抗断联 + 强反暂停 + 可 resume，闭眼跑长任务的推荐姿势。
@@ -324,21 +331,32 @@ your-project/
 │           └── 2026-05-22-<topic>-design.md     # 与 Claude 讨论的 spec（手动写）
 │
 ├── issues/                                       # ← 提交到仓库
-│   ├── 2026-05-22_10-00-00-<topic>.csv          # approved-doc 生成的任务状态源
-│   ├── 2026-05-22_10-00-00-<topic>.claims.json  # 源文档承诺账本
-│   ├── 2026-05-22_10-00-00-<topic>.review.md    # vision review 审计日志
-│   └── 2026-05-22_10-00-00-<topic>.handoff.md   # 给人看的施工交工单
+│   └── 2026-05-22_10-00-00-<topic>/
+│       ├── 2026-05-22_10-00-00-<topic>.csv          # approved-doc 生成的任务状态源
+│       ├── 2026-05-22_10-00-00-<topic>.claims.json  # 源文档承诺账本
+│       ├── 2026-05-22_10-00-00-<topic>.review.md    # vision review 审计日志
+│       ├── 2026-05-22_10-00-00-<topic>.handoff.md   # 给人看的施工交工单
+│       └── reviews/                                  # reviewer 原始输出 / prompt / jsonl
 │
 └── .mission/                                     # ← gitignored
-    ├── 2026-05-22-<task>.csv                    # long-task 生成
-    └── <task-name>/
+    └── 2026-05-22_10-00-00-<task>/
+        ├── 2026-05-22_10-00-00-<task>.csv       # long-task 生成
+        ├── 2026-05-22_10-00-00-<task>.review.md # vision review 审计日志
+        ├── 2026-05-22_10-00-00-<task>.handoff.md # 给人看的施工交工单
         ├── log.md                               # 决策日志
+        ├── reviews/                             # reviewer 原始输出 / prompt / jsonl
         └── raw/                                 # 缓存外部数据
 ```
 
 ## CSV Schema 速览
 
 固定 CSV 表头只由 `mission-csv-execute/csv-schema.md` 定义。`mission-approved-doc/doc-field-mapping.md` 只说明批准文档如何映射到这套表头，不是第二套 schema。
+
+路径规则：
+
+- `claim_ledger:<path>`、`handoff:<path>`、review log、handoff 和兜底文档的相对路径，优先按 CSV 所在目录解析。
+- 新任务默认使用目录化 artifact root：`issues/<stem>/` 或 `.mission/<stem>/`。
+- legacy 平铺 CSV 仍兼容显式输入和 recovery，但新产物不再默认写成平铺文件。
 
 关键字段：
 
@@ -350,7 +368,7 @@ your-project/
 | `required_mcp`                                               | 必须实际调用的 MCP 工具（验收合同）                          |
 | `refs`                                                       | 至少 1 个 `path:line`                                        |
 | `dev_state` / `review_initial_state` / `review_regression_state` / `git_state` | 四状态闭环                                                   |
-| `notes`                                                      | `picked_reason` / `done_at` / `skills_used` / `mcp_used` / `claim_ledger` / `review_agent_mode` / `review_result` / `handoff` / `evidence` / `risk` / `blocked` / `validation_limited` 等 |
+| `notes`                                                      | `picked_reason` / `done_at` / `skills_used` / `mcp_used` / `claim_ledger:<path>` / `review_agent_mode:<mode>` / `review_independence:<level>` / `claim_coverage:<covered>/<total>` / `claim_coverage_status:<status>` / `review_result:<result>` / `handoff:<path>` / `handoff_contract:passed` / `handoff_contract:failed <reason>` / `evidence` / `risk` / `blocked` / `validation_limited` 等 |
 
 ## FAQ
 

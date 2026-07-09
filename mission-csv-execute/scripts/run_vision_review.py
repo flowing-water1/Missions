@@ -47,26 +47,34 @@ def resolve_existing_file(value: str, workdir: Path, base_dir: Path | None = Non
     if path.is_absolute():
         candidates = [path]
     else:
-        candidates = [workdir / path]
+        candidates = []
         if base_dir:
             candidates.append(base_dir / path)
+        candidates.append(workdir / path)
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate.resolve())
     raise argparse.ArgumentTypeError(f"file does not exist: {value}")
 
 
-def optional_file(value: str | None, workdir: Path) -> str | None:
+def artifact_output_path(value: str, workdir: Path, base_dir: Path | None = None) -> Path:
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    if base_dir and (not path.parts or path.parts[0] not in {"issues", ".mission"}):
+        return (base_dir / path).resolve()
+    return (workdir / path).resolve()
+
+
+def optional_file(value: str | None, workdir: Path, base_dir: Path | None = None) -> str | None:
     if not value:
         return None
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = workdir / path
+    path = artifact_output_path(value, workdir, base_dir)
     if not path.exists():
-        return str(path.resolve())
+        return str(path)
     if not path.is_file():
         raise argparse.ArgumentTypeError(f"not a file: {value}")
-    return str(path.resolve())
+    return str(path)
 
 
 def tag_value(pattern: re.Pattern[str], notes: str) -> str | None:
@@ -95,11 +103,8 @@ def discover_claim_ledger(csv_path: str, workdir: Path) -> str | None:
     return resolve_existing_file(ledger_values[0], workdir, path.parent)
 
 
-def output_file(value: str, workdir: Path) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = workdir / path
-    return path.resolve()
+def output_file(value: str, workdir: Path, base_dir: Path | None = None) -> Path:
+    return artifact_output_path(value, workdir, base_dir)
 
 
 def build_prompt(args: argparse.Namespace) -> str:
@@ -324,7 +329,8 @@ def main() -> int:
         if args.claim_ledger
         else discover_claim_ledger(args.csv, workdir_path)
     )
-    args.review_log = optional_file(args.review_log, workdir_path)
+    csv_dir = Path(args.csv).parent
+    args.review_log = optional_file(args.review_log, workdir_path, csv_dir)
     workdir = str(workdir_path)
     prompt = build_prompt(args)
     cmd = [
@@ -359,9 +365,6 @@ def main() -> int:
         sys.stderr.write("final agent message was not valid JSON\n")
         sys.stderr.write(final_message + "\n")
         return 3
-    if not isinstance(result, dict):
-        sys.stderr.write("final agent message JSON root must be an object\n")
-        return 4
 
     missing = sorted(RESULT_KEYS - set(result))
     if missing:
@@ -388,13 +391,13 @@ def main() -> int:
 
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
-        output_path = output_file(args.output, workdir_path)
+        output_path = output_file(args.output, workdir_path, csv_dir)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(output + "\n", encoding="utf-8")
     if args.handoff:
         handoff_md = result.get("handoff_markdown")
         if handoff_md:
-            handoff_path = output_file(args.handoff, workdir_path)
+            handoff_path = output_file(args.handoff, workdir_path, csv_dir)
             handoff_path.parent.mkdir(parents=True, exist_ok=True)
             handoff_path.write_text(handoff_md.rstrip() + "\n", encoding="utf-8")
         else:

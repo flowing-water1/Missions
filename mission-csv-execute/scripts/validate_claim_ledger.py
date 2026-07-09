@@ -28,7 +28,7 @@ def resolve_path(value: str, base_dir: Path, workdir: Path) -> Path:
     path = Path(value).expanduser()
     if path.is_absolute():
         return path.resolve()
-    for root in (workdir, base_dir):
+    for root in (base_dir, workdir):
         candidate = (root / path).resolve()
         if candidate.exists():
             return candidate

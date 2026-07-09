@@ -19,8 +19,9 @@ description: Use when a task may be a user-approved design/plan document, an exi
 
 ```
 输入匹配: *.csv 或包含路径分隔符
-且文件在磁盘上存在
-且文件有合法 CSV 表头
+且路径在磁盘上存在
+若路径是文件：该文件有合法 CSV 表头
+若路径是目录：优先解析 `<dir>/<dir-name>.csv`；若不存在但目录内只有一个 CSV，则使用该 CSV；若多个 CSV 则询问用户
 → 委托给 mission-csv-execute
 ```
 

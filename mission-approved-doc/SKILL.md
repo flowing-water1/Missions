@@ -7,7 +7,7 @@ description: Use when the input is a user-approved design doc or implementation 
 
 # 目标
 
-把一个**已获用户批准**的设计文档或计划文档转换为 `issues/*.csv`，然后交给 `mission-csv-execute` 闭环执行。
+把一个**已获用户批准**的设计文档或计划文档转换为 `issues/<stem>/<stem>.csv`，然后交给 `mission-csv-execute` 闭环执行。
 
 # 流程
 
@@ -48,7 +48,7 @@ description: Use when the input is a user-approved design doc or implementation 
 
 ## Phase 2.6：抽取 Claim/Evidence Ledger
 
-在生成 issue 前，先从 `execution_scope` 中抽取一张 claim/evidence 账本，并随 CSV 同目录落盘为 `issues/<csv-basename>.claims.json`。CSV notes 只保存 claim id 和 `claim_ledger:<path>` 引用；不得只写 `claims:CLAIM-*` 而不持久化定义。
+在生成 issue 前，先从 `execution_scope` 中抽取一张 claim/evidence 账本，并随 CSV 同目录落盘为 `issues/<stem>/<stem>.claims.json`。CSV notes 只保存 claim id 和 `claim_ledger:<path>` 引用；同目录产物优先写 sibling-relative 路径，如 `claim_ledger:<stem>.claims.json`。不得只写 `claims:CLAIM-*` 而不持久化定义。
 
 每条 claim 至少包含：
 
@@ -90,11 +90,14 @@ description: Use when the input is a user-approved design doc or implementation 
 
 `mission-csv-execute/csv-schema.md` 是唯一固定 CSV schema。`mission-approved-doc` 只负责把批准文档映射成这套 19 列表头下的行数据，不定义第二套表头。
 
-生成文件：`issues/<YYYY-MM-DD_HH-mm-ss>-<topic>.csv`
+生成文件：`issues/<stem>/<stem>.csv`
+
+其中 `<stem>` 固定为 `<YYYY-MM-DD_HH-mm-ss>-<topic>`。
 
 关键规则：
 
-- 正式任务 CSV 固定放在 `issues/`
+- 正式任务 CSV 固定放在 `issues/<stem>/<stem>.csv`
+- `issues/*.csv` 是 legacy 平铺格式，只为恢复和显式输入兼容；新生成不得继续写平铺 CSV
 - 使用标准 CSV schema（见 `mission-csv-execute/csv-schema.md`）
 - `acceptance_criteria` 优先从文档里的 validation / testing / success criteria 提取
 - **原子性约束**：单个 issue 必须是一个可独立验证、独立提交的原子变更
@@ -117,12 +120,12 @@ description: Use when the input is a user-approved design doc or implementation 
    - 在 `execution_scope` 外（文档明确标注为 non-goal / future / deferred / 超出用户指定范围）→ 在 CSV 末尾 notes 记录 `out_of_scope:<doc-section>;<reason>`
    - 无法确定归属 → 补 issue 标 `P2`，交给 REVIEW-01 判断
 6. 覆盖率扫描完成后，在生成摘要中报告：`Claim 覆盖: X/Y 条已覆盖，P 条生产路径已覆盖，Z 条标注 out_of_scope`
-7. 将最终 claim/evidence ledger 写入 `<csv-basename>.claims.json`；若任何 CSV notes 出现 `claims:CLAIM-*`，同一 notes 必须包含 `claim_ledger:<path>`
+7. 将最终 claim/evidence ledger 写入 `<stem>.claims.json`；若任何 CSV notes 出现 `claims:CLAIM-*`，同一 notes 必须包含 `claim_ledger:<path>`
 
 在 CSV 中记录账本时使用压缩 notes，不要把整篇 spec 复制进 CSV。推荐格式：
 
 ```text
-claim_ledger:issues/<csv-basename>.claims.json; claims:CLAIM-001,CLAIM-002; claim_coverage:X/Y; claim_coverage_status:pending; evidence_level:integration; production_path:covered
+claim_ledger:<stem>.claims.json; claims:CLAIM-001,CLAIM-002; claim_coverage:X/Y; claim_coverage_status:pending; evidence_level:integration; production_path:covered
 ```
 
 ### `REVIEW-01` 行规则
@@ -155,7 +158,7 @@ claim_ledger:issues/<csv-basename>.claims.json; claims:CLAIM-001,CLAIM-002; clai
 | `review_initial_requirements` | `Verify all prior non-review rows are closed before running this review.` |
 | `review_regression_requirements` | `Run strongest available independent vision review against approved doc goals, non-goals, claim/evidence ledger, acceptance criteria, delivered diff, validation evidence, prior review logs, and source-specific claim/evidence alignment checks.` |
 | `refs` | `<doc-path>:1` |
-| `notes` | `review_kind:vision; review_agent_mode:pending; review_independence:pending; source_doc:<doc-path>; claim_ledger:issues/<csv-basename>.claims.json; claim_coverage:<X/Y>; claim_coverage_status:pending` |
+| `notes` | `review_kind:vision; review_agent_mode:pending; review_independence:pending; source_doc:<doc-path>; claim_ledger:<stem>.claims.json; claim_coverage:<X/Y>; claim_coverage_status:pending` |
 
 兼容旧 CSV 时可保留 `review_agent:same-model-sub-agent`，但它只是“优先使用同模型独立 reviewer”的意图标签。实际执行模式由 `mission-csv-execute` 写入 `review_agent_mode:<mode>`。
 
@@ -163,14 +166,14 @@ claim_ledger:issues/<csv-basename>.claims.json; claims:CLAIM-001,CLAIM-002; clai
 
 ```
 生成完成
-- 快照: issues/<timestamp>-<topic>.csv
+- 快照: issues/<stem>/<stem>.csv
 - 来源: <doc-path>
 - Issues: N 条（含 REVIEW-01）
   - 组件 issue: X 条
   - 接线 issue: Y 条
 - P0 任务: M 条
 - Claim 覆盖: A/B 条 spec 承诺已覆盖，P 条生产路径已覆盖，C 条标注 out_of_scope
-- Claim ledger: issues/<timestamp>-<topic>.claims.json
+- Claim ledger: issues/<stem>/<stem>.claims.json
 - 下一步: 进入闭环执行
 ```
 

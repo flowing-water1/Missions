@@ -47,8 +47,9 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 
 ## 路径约定
 
-- `issues/*.csv`：已批准设计/计划文档生成的正式执行 CSV，默认随代码一起提交
-- `.mission/*.csv`：长任务生成的本地执行 CSV，默认不提交，仅用于恢复和状态追踪
+- `issues/<stem>/<stem>.csv`：已批准设计/计划文档生成的正式执行 CSV，默认随代码一起提交
+- `.mission/<stem>/<stem>.csv`：长任务生成的本地执行 CSV，默认不提交，仅用于恢复和状态追踪
+- `issues/*.csv` 与 `.mission/*.csv`：legacy 平铺格式，只为恢复和显式输入兼容；新产物不得继续写平铺 CSV
 
 ## Notes 字段标签约定
 
@@ -71,7 +72,7 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 | `review_agent_mode:<mode>` | 实际 review 执行模式：`direct-spawn-agent` / `codex-exec-subagent` / `codex-exec-independent` / `codex-review-diff-only` / `main-session-fallback` / `pending` |
 | `review_independence:<level>` | review 独立性：`strong` / `medium` / `weak` / `pending` |
 | `review_actual_model:<model>` | reviewer 实际模型；无法确认时写 `unknown` 并同时写 `validation_limited:model parity unknown` |
-| `claim_ledger:<path>` | 持久化 claim/evidence ledger JSON 路径；任何 `claims:CLAIM-*` 都必须能在该 JSON 中找到定义 |
+| `claim_ledger:<path>` | 持久化 claim/evidence ledger JSON 路径；任何 `claims:CLAIM-*` 都必须能在该 JSON 中找到定义。相对路径优先按 CSV 所在目录解析 |
 | `claim_coverage:<covered>/<total>` | 源文档可验证 claim 覆盖率 |
 | `claim_coverage_status:<status>` | review 对 claim 覆盖的判断：`pending` / `complete` / `gaps` / `unknown` |
 | `claims:<CLAIM-001,CLAIM-002>` | 当前 issue 覆盖的 claim id 列表 |
@@ -81,7 +82,9 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 | `production_path:<status>` | 是否覆盖生产路径：`covered` / `not_required` / `deferred` / `gap` |
 | `out_of_scope:<section>;<reason>` | 源文档中明确不在本轮执行范围内的承诺或章节 |
 | `review_result:<result>` | review 结论：`vision_met` / `gaps_found` / `limited_review` |
-| `handoff:<path>` | 人类交接文档路径；`handoff:generation_failed <reason>` 表示自动生成失败、已用兜底渲染；`handoff:lint_failed <缺项>` 表示结构 lint 未通过、重生成后仍残缺、已留标记放行 |
+| `handoff:<path>` | 人类交接文档路径；相对路径优先按 CSV 所在目录解析；`handoff:generation_failed <reason>` 表示自动生成失败、已用兜底渲染，但仍应同时记录兜底文档路径 |
+| `handoff_contract:passed` | handoff 已通过 `scripts/check_handoff_contract.py`；该检查包含 `.handoff.md` 命名、同名前缀 CSV、REVIEW notes 的 `handoff:<path>`、以及 markdown 骨架 lint |
+| `handoff_contract:failed <reason>` | handoff contract check 重试后仍失败；允许代码交付继续收口，但不得把 review 结论写成 `vision_met`，最终回复必须明说 handoff 不合格 |
 | `source_doc:<path>` | 生成 CSV 的批准文档路径 |
 | `pr:<id>` | 关联 PR |
 
@@ -89,4 +92,4 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 
 `REVIEW-*` 行生成时只需要写入初始标签：`review_kind:vision`、`source_doc:<path>`、`claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`。`review_agent:same-model-sub-agent` 可保留为兼容旧 CSV 的意图标签，但不能替代 `review_agent_mode`。
 
-`review_actual_model`、`review_result`、`handoff`、`handoff_humanized`、`validation_limited` 等标签由 `mission-csv-execute` 执行 REVIEW 后回填。生成阶段不预填这些标签，不算 schema 缺失。
+`review_actual_model`、`review_result`、`handoff`、`handoff_contract`、`handoff_humanized`、`validation_limited` 等标签由 `mission-csv-execute` 执行 REVIEW 后回填。生成阶段不预填这些标签，不算 schema 缺失。

@@ -13,8 +13,9 @@ description: Use when executing an existing task CSV and the agent needs to push
 
 CSV 可能来自两种位置：
 
-- `issues/*.csv`：正式任务，CSV 默认随代码一起提交
-- `.mission/*.csv`：长任务，CSV 仅作为本地恢复工件，不默认提交
+- `issues/<stem>/<stem>.csv`：正式任务，CSV 默认随代码一起提交
+- `.mission/<stem>/<stem>.csv`：长任务，CSV 仅作为本地恢复工件，不默认提交
+- `issues/*.csv` / `.mission/*.csv`：legacy 平铺格式，只为恢复和显式输入兼容
 
 你接手的是整批活，不是一条 issue。
 完成一条后立刻下一条。
@@ -56,9 +57,19 @@ CSV 可能来自两种位置：
 - 已执行最强可用的独立愿景 review：优先 direct `spawn_agent`，其次 `codex exec` 独立同模型 reviewer，最后才是受限 fallback
 - review log 和 CSV `notes` 已记录 `review_agent_mode:<mode>`、`review_independence:<strong|medium|weak>`、`claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:<complete|gaps|unknown>`、`review_result:<result>`
 - review 结论已经写入 review log
-- 已产出 human handoff（`<csv-path-without-.csv>.handoff.md`），且 CSV `notes` 已记 `handoff:<path>`（或生成失败时记 `handoff:generation_failed <reason>` 并产出兜底文档）
+- 已产出 human handoff（`<csv-path-without-.csv>.handoff.md`），CSV `notes` 已记 `handoff:<path>`，并已记录 `handoff_contract:passed` 或 `handoff_contract:failed <reason>`；若 `review_result:vision_met`，必须是 `handoff_contract:passed`
 - 若发现缺口，已追加 follow-up issue 和下一轮 `REVIEW-(N+1)`
 - 若上轮是 `limited_review` 且只剩等待独立 review 能力变化的 rerun 行，不得重复追加同类 `REVIEW-*` 行
+
+# Artifact root 规则
+
+每个 mission run 的 artifact root 固定为 CSV 所在目录。
+
+- 新正式任务：`issues/<stem>/<stem>.csv`，artifact root 为 `issues/<stem>/`
+- 新长任务：`.mission/<stem>/<stem>.csv`，artifact root 为 `.mission/<stem>/`
+- Legacy 任务：`issues/<stem>.csv` 或 `.mission/<stem>.csv`，artifact root 仍为 CSV 所在目录
+- `claim_ledger:<path>`、`handoff:<path>`、review log、handoff、兜底文档等相对路径都优先按 artifact root 解析
+- 新产物默认写入 artifact root；多轮 reviewer 原始输出、prompt、jsonl 等噪声文件写入 `reviews/` 子目录
 
 # Issue 选择规则
 
@@ -195,7 +206,7 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 # Vision Review 闭环
 
 `REVIEW-*` 行用于判断整批工作是否真正达成批准文档愿景。
-同一规则适用于 `issues/*.csv` 与 `.mission/*.csv`。
+同一规则适用于目录化 CSV 与 legacy 平铺 CSV。
 
 ## Review 前置条件
 
@@ -203,7 +214,7 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 - 若前面仍有未完成的普通 issue，先跳过当前 review 行，继续普通 issue
 - review 不实现功能；review 只审计、记录、追加可执行工作
 - review 行必须包含任务专属 claim/evidence 检查项；如果 `review_regression_requirements` 仍是纯通用套话，先回读 `source_doc`、当前 CSV 和交付证据，补齐该行后再执行 review
-- 若任意行 `notes` 包含 `claims:CLAIM-*` 但没有可读的 `claim_ledger:<path>`，CSV 不完整；先补齐 `<csv-basename>.claims.json` 并写回 `claim_ledger`，不得把 claim id 当作可审计证据
+- 若任意行 `notes` 包含 `claims:CLAIM-*` 但没有可读的 `claim_ledger:<path>`，CSV 不完整；先在 artifact root 补齐 `<csv-stem>.claims.json` 并写回 `claim_ledger:<csv-stem>.claims.json`，不得把 claim id 当作可审计证据
 
 ## Review 输入
 
@@ -241,7 +252,7 @@ python scripts/run_vision_review.py \
   --csv <csv-path> \
   --source-doc <source-doc-path> \
   --claim-ledger <claim-ledger-json-path> \
-  --review-log <review-log-path> \
+  --review-log <csv-path-without-.csv>.review.md \
   --handoff <csv-path-without-.csv>.handoff.md \
   --workdir <repo-root> \
   --model <current-model>
@@ -266,7 +277,7 @@ reviewer prompt 必须明确写入：
    - `gaps_found`: 仍有差距
    - `limited_review`: 独立 review 不可用或证据不足，不能给强通过结论
 
-将本轮结论写入 `<csv-path-without-.csv>.review.md`，与 CSV 同目录。
+将本轮结论写入 `<csv-path-without-.csv>.review.md`，与 CSV 同目录。若同时保存 reviewer 原始 JSON、JSONL 或 prompt，写入 artifact root 下的 `reviews/`。
 
 ## Human Handoff 产物
 
@@ -393,11 +404,12 @@ flowchart LR
 - handoff 是**只读派生产物**：内容来自 source doc / CSV / review JSON / 代码实际状态，禁止手工编辑；要改内容就重跑 review 重新生成。
 - handoff 内容硬约束：每句话必须可追溯到上述数据源，禁止用固定模板或漂亮话填充篇幅（与项目硬门禁"不得用输出修补伪装能力"一致）；数据源薄就如实写薄，不许编。
 - 生成后在 REVIEW 行 `notes` 追加 `handoff:<path>`。
-- **落盘后必须跑结构 lint**（机械验收，不信 reviewer 自报，对齐 superpowers "看机器证据"原则）：
-  - 运行 `python <skill-dir>/scripts/lint_handoff.py <handoff-path>`。
-  - lint 卡得宽松——只查骨架是否走通 template（标题、独立性头、五层 `##` 至少命中 2 个、对账表、无审计黑话），不审内容质量。出现规范化结构基本就意味着 reviewer 走通了。
-  - 退出码 0 = 通过，正常闭环。
-  - 退出码 1 = 残件（如被压成几段摘要）：**重生成一次** handoff，再 lint；仍失败则在 `notes` 记 `handoff:lint_failed <缺项>` 后放行——不阻塞 mission 闭环（handoff 永远不比代码交付优先），但留下可见的不合格标记，不再静默接受。
+- **落盘后必须跑 handoff contract check**（机械验收，不信 reviewer 自报，对齐 superpowers "看机器证据"原则）：
+  - 运行 `python <skill-dir>/scripts/check_handoff_contract.py <handoff-path> --csv <csv-path>`。
+  - contract check 会同时确认三件事：文件名是 `.handoff.md`、同名前缀 CSV 的 `REVIEW-*` 行 notes 记录了 `handoff:<path>`、markdown 通过 `lint_handoff.py` 的骨架检查。
+  - 退出码 0 = 通过；在 REVIEW 行 `notes` 追加 `handoff_contract:passed`。
+  - 退出码 1 = 不合格：如果是路径或 notes 缺失，先修正 CSV notes 后重跑；如果是 markdown 残件，**重生成一次** handoff 后重跑。
+  - 重试后仍失败：在 REVIEW 行 `notes` 追加 `handoff_contract:failed <缺项>`。允许代码交付继续收口，但不得把本轮 review 写成 `vision_met`，最终回复必须明说 handoff 不合格，不能声称"handoff 已完成"。
 
 ### humanizer-zh 后处理（必须）
 
@@ -422,6 +434,7 @@ reviewer 产出的 `handoff_markdown` 是草稿，落盘前**必须**经过 huma
 - **不阻塞 mission 闭环**——handoff 永远不能比代码交付优先级高，它是辅助产物。
 - 在 REVIEW 行 `notes` 记 `handoff:generation_failed <reason>`。
 - 主 agent 用 review JSON + CSV + 代码现有数据，按上述内容结构手动渲染一份兜底 handoff，顶部标 `WARNING: auto-generation failed, rendered by main agent as fallback`。
+- 兜底文档仍写入 `<csv-path-without-.csv>.handoff.md`，并在 REVIEW 行 `notes` 追加 `handoff:<path>`；随后照常运行 `check_handoff_contract.py`。若 contract 失败，按 `handoff_contract:failed <缺项>` 处理，不得静默当作合格 handoff。
 
 ## 发现差距时
 
@@ -476,8 +489,9 @@ REVIEW-02
 
 文件：`<csv-path-without-.csv>.review.md`
 
-- `issues/<topic>.csv` → `issues/<topic>.review.md`
-- `.mission/<topic>.csv` → `.mission/<topic>.review.md`
+- `issues/<stem>/<stem>.csv` → `issues/<stem>/<stem>.review.md`
+- `.mission/<stem>/<stem>.csv` → `.mission/<stem>/<stem>.review.md`
+- Legacy: `issues/<topic>.csv` → `issues/<topic>.review.md`
 
 每轮追加：
 
@@ -501,9 +515,9 @@ REVIEW-02
 
 ## Review 行闭环
 
-`REVIEW-N` 只有在 review log 已写入，且 handoff.md 已生成（或已记 `handoff:generation_failed` 并产出兜底）后才能完成：
+`REVIEW-N` 只有在 review log 已写入、handoff.md 已生成（或已记 `handoff:generation_failed` 并产出兜底）、且 handoff contract check 结果已写入 notes 后才能完成：
 
-- 若 `vision_met`：标记 `REVIEW-N` 完成，若无其他未完成行则结束 CSV
+- 若 `vision_met`：必须同时满足 `handoff_contract:passed`；标记 `REVIEW-N` 完成，若无其他未完成行则结束 CSV
 - 若 `gaps_found`：追加 follow-up issue 和 `REVIEW-(N+1)` 后，标记 `REVIEW-N` 完成并继续
 - 若 `limited_review` 且没有可执行 gap：标记当前 review 行完成，但必须追加 `REVIEW-(N+1)`；新行 `notes` 写 `blocked:waiting independent review capability; retry_when:independent_review_capability_changes; previous_review_mode:<mode>`，`acceptance_criteria` 要求在更强 independent review 可用时重跑；不得把 limited 结论写成 `vision_met`，也不得立即选择新行造成无限 review 循环
 - 若存在 human-required blocker：记录 blocker，保持 `git_state=未提交`，停止并请求最小必要输入
@@ -675,7 +689,7 @@ REVIEW-02
 - 若受限验收：notes 已写 `validation_limited/manual_test/mcp_evidence/evidence/risk`
 - 声明-证据一致性已检查：没有把 mock、fixture、dry-run、字符串检查或静态验证包装成原目标通过
 - `review_initial_state` 与 `review_regression_state` 均已推进
-- `issues/*.csv` 与代码一起提交，或 `.mission/*.csv` 正确保留为本地工件，状态枚举值合法
+- `issues/<stem>/<stem>.csv` 与代码一起提交，或 `.mission/<stem>/<stem>.csv` 正确保留为本地工件，状态枚举值合法；legacy 平铺 CSV 只在恢复旧任务时保留
 - 文档/注释/refs 已同步
 - commit message 遵循项目提交约定
 - 无无关改动混入

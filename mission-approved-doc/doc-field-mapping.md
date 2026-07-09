@@ -51,10 +51,10 @@
 每个普通 issue 的 `notes` 应压缩记录相关 claim，例如：
 
 ```text
-claim_ledger:issues/<csv-basename>.claims.json; claims:CLAIM-001,CLAIM-004; evidence_level:integration; production_path:covered
+claim_ledger:<stem>.claims.json; claims:CLAIM-001,CLAIM-004; evidence_level:integration; production_path:covered
 ```
 
-`REVIEW-01` 的 `review_regression_requirements` 必须要求逐条读取 `<csv-basename>.claims.json`，检查三件事：claim 是否覆盖、生产路径是否接上、证据等级是否支撑交付声明。若 CSV notes 出现 `claims:CLAIM-*` 但没有 `claim_ledger:<path>`，该 CSV 不完整，必须先补 ledger 再执行。
+`REVIEW-01` 的 `review_regression_requirements` 必须要求逐条读取 `<stem>.claims.json`，检查三件事：claim 是否覆盖、生产路径是否接上、证据等级是否支撑交付声明。若 CSV notes 出现 `claims:CLAIM-*` 但没有 `claim_ledger:<path>`，该 CSV 不完整，必须先补 ledger 再执行。
 
 ### 闭环路径规则（HARD — 组件 issue 不能代替接线 issue）
 

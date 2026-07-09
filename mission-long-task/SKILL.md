@@ -7,7 +7,7 @@ description: Use when the input is a complex task description that needs decompo
 
 # 目标
 
-把一个复杂任务分解为可追踪的 `.mission/*.csv`，然后交给 `mission-csv-execute` 闭环执行。
+把一个复杂任务分解为可追踪的 `.mission/<stem>/<stem>.csv`，然后交给 `mission-csv-execute` 闭环执行。
 
 # 适用场景
 
@@ -21,7 +21,7 @@ description: Use when the input is a complex task description that needs decompo
 ## Phase 0：初始化
 
 1. 确定项目根目录
-2. 从用户请求生成任务名：`<YYYYMMDD>-<short-topic>`（小写，连字符分隔）
+2. 从用户请求生成短任务名：`<short-topic>`（小写，连字符分隔），再生成 run stem：`<YYYYMMDD_HH-mm-ss>-<short-topic>`
 3. 确保 `.mission/` 目录存在
 
 ## Phase 1：分析与拆分
@@ -32,9 +32,9 @@ description: Use when the input is a complex task description that needs decompo
 ### 所有任务
 1. 拆分为 5-15 步（动词开头描述）
 2. 为每步定义 acceptance criteria 和验证方式
-3. 生成 `.mission/<YYYYMMDD_HH-mm-ss>-<task-name>.csv`，使用标准 CSV schema
+3. 生成 `.mission/<stem>/<stem>.csv`，使用标准 CSV schema
 4. 填充：`id`, `priority`, `phase`, `area`, `title`, `description`, `acceptance_criteria`, `test_mcp`, `required_skills`, `required_mcp`
-5. 在普通执行 issue 之后追加 `REVIEW-01`，用于同模型 sub-agent 长任务完成度 review；该行必须包含从原始任务抽取的任务专属 claim/evidence 检查项，不能只写通用套话
+5. 在普通执行 issue 之后追加 `REVIEW-01`，用于按 `mission-csv-execute` 的 review capability 阶梯做长任务完成度 review；该行必须包含从原始任务抽取的任务专属 claim/evidence 检查项，不能只写通用套话
 
 ### 拆分规则
 - 每条 issue = 一个独立可验证的工作单元
@@ -46,7 +46,7 @@ description: Use when the input is a complex task description that needs decompo
 
 ### `.mission` `REVIEW-01` 行规则
 
-`.mission/*.csv` 也必须显式生成 review 行；不要只依赖最后总结。
+`.mission/<stem>/<stem>.csv` 也必须显式生成 review 行；不要只依赖最后总结。Legacy `.mission/*.csv` 只为恢复兼容。
 
 生成 `REVIEW-01` 时，先从原始任务中抽取用户真正承诺的结果，并写进 review 条件：
 
@@ -64,25 +64,25 @@ description: Use when the input is a complex task description that needs decompo
 | `phase` | 最后阶段序号 |
 | `area` | `review` |
 | `title` | `Review task outcome against original request` |
-| `description` | `Use a same-model sub-agent review to compare original-request claims with delivered behavior, evidence level, CSV state, validation evidence, and mission log.` |
-| `acceptance_criteria` | `WHEN all non-review issues before this row are closed THEN run same-model sub-agent review against source-specific claim/evidence checks; WHEN gaps or overstated claims are found THEN append follow-up issues and REVIEW-02; WHEN no gaps remain THEN close the CSV.` |
+| `description` | `Run the strongest available independent vision review to compare original-request claims with delivered behavior, evidence level, CSV state, validation evidence, and mission log.` |
+| `acceptance_criteria` | `WHEN all non-review issues before this row are closed THEN run vision review through mission-csv-execute's review capability ladder against source-specific claim/evidence checks; WHEN gaps or overstated claims are found THEN append follow-up issues and REVIEW-02; WHEN no gaps remain THEN close the CSV.` |
 | `test_mcp` | `MANUAL` |
 | `required_skills` | `superpowers:requesting-code-review` |
 | `required_mcp` | 留空，除非任务本身要求浏览器或外部验证 |
 | `review_initial_requirements` | `Verify all prior non-review rows are closed before running this review.` |
-| `review_regression_requirements` | `Run same-model sub-agent review against original request, acceptance criteria, delivered diff, validation evidence, mission log, and source-specific claim/evidence alignment checks.` |
+| `review_regression_requirements` | `Run strongest available independent vision review against original request, acceptance criteria, delivered diff, validation evidence, mission log, and source-specific claim/evidence alignment checks.` |
 | `refs` | `<best-source-path-or-request>:1` |
-| `notes` | `review_kind:vision; review_agent:same-model-sub-agent; source_doc:<task-source>` |
+| `notes` | `review_kind:vision; review_agent_mode:pending; review_independence:pending; source_doc:<task-source>` |
 
 ## Phase 2：委托执行
 
-将生成的 `.mission/<timestamp>-<task-name>.csv` 交给 `mission-csv-execute`。
+将生成的 `.mission/<stem>/<stem>.csv` 交给 `mission-csv-execute`。
 
 - 生成 CSV 后立即进入 `mission-csv-execute`，不要因为 CSV 已生成、log 已齐、checkpoint 已完整而暂停。
 - checkpoint / commentary 只服务恢复与可见进度，不是把控制权交还给用户的理由。
 
 与批准文档执行流的区别：
-- CSV 位置：在 `.mission/`，作为本地恢复工件
+- CSV 位置：在 `.mission/<stem>/`，作为本地恢复工件
 - Git 跟踪：CSV 默认不提交，代码按逻辑边界提交
 - Commit message：`[<task-name>-<id>] <title>`
 
@@ -91,10 +91,10 @@ description: Use when the input is a complex task description that needs decompo
 被中断后恢复时：
 
 1. 检测上下文丢失（compaction / 会话重启）
-2. 定位 CSV：`ls .mission/*.csv`
+2. 定位 CSV：优先找 `.mission/*/*.csv`，再兼容 legacy `.mission/*.csv`
 3. 恢复状态：
    - 读 CSV → 找到第一个未完成行
-   - 读 `.mission/<task-name>/log.md`（如有）→ 恢复决策上下文
+   - 读 CSV 同目录的 `log.md`（如有）→ 恢复决策上下文
 4. 宣告恢复：
    ```
    上下文已恢复
@@ -106,7 +106,7 @@ description: Use when the input is a complex task description that needs decompo
 
 ## Phase 4：决策日志（推荐）
 
-对于长任务，维护 `.mission/<task-name>/log.md`：
+对于长任务，维护 CSV 同目录的 `log.md`：
 
 ```markdown
 ## Step N: <title>
@@ -123,15 +123,18 @@ description: Use when the input is a complex task description that needs decompo
 ## Phase 5：收尾
 
 1. 确认所有 CSV 行已完成
-2. 在 `.mission/<task-name>/log.md` 写最终总结（如有）
+2. 在 CSV 同目录的 `log.md` 写最终总结（如有）
 3. 向用户宣告完成
 
 # 目录结构
 
 ```
 .mission/                           # gitignored，仅辅助工件
-├── <timestamp>-<task-name>.csv     # 任务状态（标准 CSV schema）
-└── <task-name>/
+└── <stem>/
+    ├── <stem>.csv                  # 任务状态（标准 CSV schema）
+    ├── <stem>.review.md            # review log（如有）
+    ├── <stem>.handoff.md           # human handoff（如有）
     ├── log.md                      # 决策日志 / 审计轨迹
+    ├── reviews/                    # reviewer 原始输出 / prompt / jsonl（如有）
     └── raw/                        # 缓存的外部数据
 ```
