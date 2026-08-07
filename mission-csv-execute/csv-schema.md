@@ -10,7 +10,7 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 
 | 字段 | 格式 | 规则 |
 |------|------|------|
-| `id` | `<GROUP>-<seq>` | 如 `SPEC-01`（approved doc）、`PLAN-01`（approved plan）或 `01`（long task） |
+| `id` | `<GROUP>-<seq>` | 如 `SPEC-01` 或外部兼容 CSV 的既有 id |
 | `priority` | `P0\|P1\|P2` | |
 | `phase` | `1\|2\|3...` | 执行阶段序号 |
 | `area` | `backend\|frontend\|both\|infra\|review` | `REVIEW-*` 行固定使用 `review` |
@@ -47,9 +47,9 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 
 ## 路径约定
 
-- `issues/<stem>/<stem>.csv`：已批准设计/计划文档生成的正式执行 CSV，默认随代码一起提交
-- `.mission/<stem>/<stem>.csv`：长任务生成的本地执行 CSV，默认不提交，仅用于恢复和状态追踪
-- `issues/*.csv` 与 `.mission/*.csv`：legacy 平铺格式，只为恢复和显式输入兼容；新产物不得继续写平铺 CSV
+- `issues/<stem>/<stem>.csv`：approved spec 生成的正式执行 CSV，随完整证据集一起提交
+- `issues/*.csv`：legacy 平铺格式，只为恢复和显式输入兼容；新产物不得继续写平铺 CSV
+- 显式传入的合法外部 CSV 可位于任意目录；artifact root 是其父目录，是否提交取决于它是否已跟踪或明确属于 `issues/`
 
 ## Notes 字段标签约定
 
@@ -67,11 +67,15 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 | `risk:<low\|medium\|high> <note>` | 风险评估 |
 | `assumption:<note>` | 为继续闭环而采用的合理假设 |
 | `decision_debt:<note>` | 未阻塞执行、但需要在 review log 中留痕的决策债 |
+| `deferred_ledger:<path>` | Deferred Findings 证据台账路径，默认 `<stem>.deferred.json`；台账不控制 issue 状态，相对路径优先按 CSV 所在目录解析 |
+| `deferred_findings:<DF-001,DF-002>` | 当前 CSV 行发现或引用的待讨论项；每个 id 必须存在于 deferred ledger |
+| `deferred_coverage:<covered>/<open>` | 最终 handoff 已覆盖的开放待讨论项数量；只在最新 REVIEW notes 回填 |
 | `review_kind:vision` | `REVIEW-*` 行的文档愿景验收标记 |
-| `review_agent:same-model-sub-agent` | 兼容旧 CSV 的意图标签：要求优先使用同模型独立 reviewer；实际执行方式以 `review_agent_mode` 为准 |
-| `review_agent_mode:<mode>` | 实际 review 执行模式：`direct-spawn-agent` / `codex-exec-subagent` / `codex-exec-independent` / `codex-review-diff-only` / `main-session-fallback` / `pending` |
-| `review_independence:<level>` | review 独立性：`strong` / `medium` / `weak` / `pending` |
-| `review_actual_model:<model>` | reviewer 实际模型；无法确认时写 `unknown` 并同时写 `validation_limited:model parity unknown` |
+| `review_agent_mode:<mode>` | closing review 模式：`reviewer-subagent` / `codex-exec-independent` / `self-review` / `pending` |
+| `review_independence:<value>` | `true` / `false` / `pending`；self-review 固定为 `false` |
+| `review_requested_model:<model>` | 独立 review 请求的模型，默认 `gpt-5.6-sol` |
+| `review_observed_model:<model>` | 仅由 host/session metadata、CLI event stream 或可信 parent runtime 记录；无证据写 `unknown` |
+| `review_model_evidence:<source>` | `session-metadata` / `event-stream` / `parent-runtime` / `unknown` |
 | `claim_ledger:<path>` | 持久化 claim/evidence ledger JSON 路径；任何 `claims:CLAIM-*` 都必须能在该 JSON 中找到定义。相对路径优先按 CSV 所在目录解析 |
 | `claim_coverage:<covered>/<total>` | 源文档可验证 claim 覆盖率 |
 | `claim_coverage_status:<status>` | review 对 claim 覆盖的判断：`pending` / `complete` / `gaps` / `unknown` |
@@ -90,6 +94,36 @@ id,priority,phase,area,title,description,acceptance_criteria,test_mcp,required_s
 
 ### REVIEW notes 分阶段
 
-`REVIEW-*` 行生成时只需要写入初始标签：`review_kind:vision`、`source_doc:<path>`、`claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`。`review_agent:same-model-sub-agent` 可保留为兼容旧 CSV 的意图标签，但不能替代 `review_agent_mode`。
+`REVIEW-*` 行生成时写入：`review_kind:vision`、`source_doc:<path>`（兼容 CSV 可改为 `source_csv:<path>`）、存在的 sidecar 路径、`claim_coverage:<covered>/<total>` 或 `unknown`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`、`review_requested_model:gpt-5.6-sol`、`review_observed_model:unknown`、`review_model_evidence:unknown`。
 
-`review_actual_model`、`review_result`、`handoff`、`handoff_contract`、`handoff_humanized`、`validation_limited` 等标签由 `mission-csv-execute` 执行 REVIEW 后回填。生成阶段不预填这些标签，不算 schema 缺失。
+实际 mode、独立性、模型证据、`review_result`、`handoff`、`handoff_contract`、`handoff_humanized`、`deferred_coverage`、`validation_limited` 等标签由 `mission-csv-execute` 执行 REVIEW 后回填。
+
+## Deferred Findings sidecar
+
+`<artifact-root>/<stem>.deferred.json` 只保存执行中发现、但不属于当前批准范围的证据。CSV 仍是唯一任务状态源；sidecar 不得决定 issue 是否完成，也不得用来延期当前验收。
+
+```json
+{
+  "schema_version": 1,
+  "csv": "<stem>.csv",
+  "findings": [
+    {
+      "id": "DF-001",
+      "kind": "deferred_improvement",
+      "status": "open",
+      "title": "自然语言标题",
+      "summary": "观察到的现象",
+      "source_issue_ids": ["DEV-01"],
+      "evidence_refs": ["trace/test/path:line"],
+      "why_deferred": "为什么不影响当前批准范围",
+      "discussion_question": "任务结束后需要用户决定什么"
+    }
+  ]
+}
+```
+
+- `kind` 只允许 `deferred_improvement`（范围外的质量或架构改进）和 `future_decision`（当前范围完成后的产品或架构选择）。
+- `status` 只允许 `open`、`promoted`、`dismissed`。`promoted` 表示用户讨论后已转成正式任务；本轮 mission 不自动创建该任务。
+- 当前 scope 或 acceptance gap、失败验收、缺失接线、错误声明都不得写进 sidecar，必须现在修复或追加正式 follow-up issue。
+- machine ledger 保留 id、trace、路径和结构化字段原文，不经过 `humanizer-zh`。最终 handoff 的可见正文才做人话润色。
+- 运行 `python scripts/validate_deferred_ledger.py <csv-path> --workdir <repo-root>` 校验路径、引用、分类和覆盖计数。

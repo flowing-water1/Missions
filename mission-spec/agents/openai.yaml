@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mission Spec"
+  short_description: "Discuss requirements and approve canonical mission specs"
+  default_prompt: "Use mission-spec to discuss this request and write an approvable canonical spec."

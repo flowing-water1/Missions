@@ -11,11 +11,10 @@ description: Use when executing an existing task CSV and the agent needs to push
 把 **整个 CSV** 中所有可推进项推到闭环完成：
 **实现 → Review → 自我验收 → Git 提交**。
 
-CSV 可能来自两种位置：
+CSV 可以来自两种来源：
 
-- `issues/<stem>/<stem>.csv`：正式任务，CSV 默认随代码一起提交
-- `.mission/<stem>/<stem>.csv`：长任务，CSV 仅作为本地恢复工件，不默认提交
-- `issues/*.csv` / `.mission/*.csv`：legacy 平铺格式，只为恢复和显式输入兼容
+- `issues/<stem>/<stem>.csv`：canonical approved spec 生成的正式任务
+- 任意显式传入的合法外部 CSV，包括 `issues/*.csv` legacy 平铺格式
 
 你接手的是整批活，不是一条 issue。
 完成一条后立刻下一条。
@@ -24,7 +23,7 @@ CSV 可能来自两种位置：
 # 硬规则
 
 1. **CSV 是唯一状态源**：只做 CSV 这一行描述的工作；任何需求变更先写回 CSV，再改代码。
-2. **默认完成整个 CSV**：你自行决定执行顺序，但目标必须是把所有 issues 推到闭环完成。每完成一条都必须完成对应代码提交；若 CSV 位于 `issues/`，则 **代码 + 当前 CSV** 一起提交；若 CSV 位于 `.mission/`，则提交代码并保留 CSV 为本地状态源。
+2. **默认完成整个 CSV**：你自行决定执行顺序，但目标必须是把所有 issues 推到闭环完成。正式 `issues/<stem>/` 任务提交代码与完整证据集；外部 CSV 只有在已跟踪或明确属于 `issues/` 时才提交。
 3. **闭环不可缺省**：实现 + 文档同步 + Review + 自我验收 + Git commit，缺一不可。
 4. **不假想结果**：每一步都用工具实际落盘/验证。
 5. **不把控制权交还给用户来替你做中间决策**：只要求最小必要信息。遇到不确定性时选择最合理假设继续。
@@ -40,6 +39,15 @@ CSV 可能来自两种位置：
 15. **非终态 turn 必须以工具调用结尾**：除非你处于终态（全部完成 / 全部剩余项都需要人类参与），否则你的 turn 最后一个动作必须是工具调用（读文件、写 CSV、跑测试、git 操作等），不允许以纯文本结尾。如果你发现自己准备只输出文本就结束 turn，这就是你正在违规停止的信号——立刻追加下一条 issue 的工具调用。
 16. **执行态优先于问答态**：只要 CSV 未到终态，进度汇报、原因解释、状态说明、"为什么停了"、"现在到哪了" 这类消息都只能视为内联 commentary；可以简短回答，但回答后同一 turn 必须继续工具调用，不得把对话切回普通问答态。
 17. **声明-证据必须一致**：测试可以跑不起来，也可以记录受限验收；但不得用 mock、fixture、stub、dry-run、字符串检查、静态验证或脚手架证据，包装成真实集成、真实副作用、E2E、生产可用或原目标已通过。
+18. **Outcome Contract 是读者合同**：新任务存在 `outcome_contract:<path>` 时，review 必须逐条回答 reader questions，handoff 必须呈现判定、证据、边界和下一步；不得用 issue 完成数或实现状态代替能力结论。
+19. **人类 handoff 必须经过 `humanizer-zh`**：未在最新 REVIEW notes 记录 `handoff_humanized:true` 时，只能保留 draft，不能通过 handoff contract，不能完成 REVIEW。结构化答案表和 blocked-claim 表不得润色，正文必须润色。
+20. **先分类再处置发现**：当前 scope/acceptance gap 现在修或追加正式 follow-up issue；human-required blocker 记录后继续其他可推进项；只有不阻塞当前承诺的改进和未来决策才进入 Deferred Findings ledger。
+21. **sidecar 不是第二状态源**：`<stem>.deferred.json` 只保存证据和讨论问题，不控制 CSV 行状态，也不得成为关闭当前 issue 的理由。CSV 始终是唯一任务状态源。
+22. **完成后停在讨论入口**：原 CSV 和 handoff 闭环后，向用户展示开放的待讨论项并停止。不得自动创建下一份 CSV，也不得把待讨论项追加到当前 CSV 后继续执行。
+23. **每个 CSV 都必须有 closing review**：加载合法 CSV 后若没有 `REVIEW-*` 行，先追加 `REVIEW-01`。从所有普通行的 description、acceptance criteria、refs、notes 和已有验证证据构造 review scope，写 `source_csv:<path>`；不存在的 spec、claim ledger 或 outcome contract 保持不存在，不得伪造。
+24. **保护用户 index**：开始时记录 `git diff --cached` 的路径与 patch。提交只命名本任务路径；已暂存的无关改动保持原样且不得进入提交。同一路径存在用户已暂存 patch、或无法精确隔离 index delta 时，记录 human-required blocker。禁止用 `git stash`、reset、移动或隐藏用户工作来简化提交。
+
+接收 CSV 后先运行 `python scripts/ensure_review_row.py <csv-path>`。提交边界复杂时使用 `scripts/git_isolation.py` 的 `commit_paths`；它会拒绝同路径 staged 冲突并核对提交前后的 index patch。
 
 # 闭环完成判定
 
@@ -54,21 +62,22 @@ CSV 可能来自两种位置：
 
 `REVIEW-*` 行还必须满足：
 
-- 已执行最强可用的独立愿景 review：优先 direct `spawn_agent`，其次 `codex exec` 独立同模型 reviewer，最后才是受限 fallback
-- review log 和 CSV `notes` 已记录 `review_agent_mode:<mode>`、`review_independence:<strong|medium|weak>`、`claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:<complete|gaps|unknown>`、`review_result:<result>`
+- 已按顺序尝试 `reviewer` 子代理、只读 ephemeral `codex exec`，必要时由主代理完成同一份 self-review
+- review log 和 CSV `notes` 已记录 `review_agent_mode:<reviewer-subagent|codex-exec-independent|self-review>`、`review_independence:<true|false>`、requested/observed model 与 evidence source、实际存在的 ledger、coverage 和 `review_result`
 - review 结论已经写入 review log
 - 已产出 human handoff（`<csv-path-without-.csv>.handoff.md`），CSV `notes` 已记 `handoff:<path>`，并已记录 `handoff_contract:passed` 或 `handoff_contract:failed <reason>`；若 `review_result:vision_met`，必须是 `handoff_contract:passed`
-- 若发现缺口，已追加 follow-up issue 和下一轮 `REVIEW-(N+1)`
-- 若上轮是 `limited_review` 且只剩等待独立 review 能力变化的 rerun 行，不得重复追加同类 `REVIEW-*` 行
+- 若发现当前 scope/acceptance gap，已追加 follow-up issue 和下一轮 `REVIEW-(N+1)`
+- 若存在开放 Deferred Findings，ledger 已通过 `validate_deferred_ledger.py`，handoff 已逐条覆盖，最新 REVIEW notes 已记录 `deferred_coverage:<covered>/<open>`
+- self-review 已完整分类并处置所有发现时可以闭环；不得仅为等待独立能力而追加空转的 `REVIEW-*`
 
 # Artifact root 规则
 
 每个 mission run 的 artifact root 固定为 CSV 所在目录。
 
-- 新正式任务：`issues/<stem>/<stem>.csv`，artifact root 为 `issues/<stem>/`
-- 新长任务：`.mission/<stem>/<stem>.csv`，artifact root 为 `.mission/<stem>/`
-- Legacy 任务：`issues/<stem>.csv` 或 `.mission/<stem>.csv`，artifact root 仍为 CSV 所在目录
-- `claim_ledger:<path>`、`handoff:<path>`、review log、handoff、兜底文档等相对路径都优先按 artifact root 解析
+- 正式任务：`issues/<stem>/<stem>.csv`，artifact root 为 `issues/<stem>/`
+- Legacy 或外部任务：artifact root 仍为显式 CSV 所在目录
+- `claim_ledger:<path>`、`deferred_ledger:<path>`、`handoff:<path>`、review log、handoff、兜底文档等相对路径都优先按 artifact root 解析
+- `outcome_contract:<path>` 与 CSV 同目录优先解析；它由任务生成端冻结，执行阶段只读，不回写运行答案
 - 新产物默认写入 artifact root；多轮 reviewer 原始输出、prompt、jsonl 等噪声文件写入 `reviews/` 子目录
 
 # Issue 选择规则
@@ -82,8 +91,6 @@ CSV 可能来自两种位置：
 `REVIEW-*` 行只在它之前的所有非 review 行都闭环后执行。
 
 如果 `REVIEW-N` 追加了 follow-up issue 和 `REVIEW-(N+1)`，则 `REVIEW-N` 自己正常闭环；执行器继续后续 follow-up issue，之后再执行新的 review 行。不要让旧 review 行保持挂起，也不要回头重开旧 review 行。
-
-如果 `REVIEW-N` 的 `notes` 包含 `retry_when:independent_review_capability_changes`，只有当本轮能使用比该行记录的上一轮模式更强的 review 能力时才选择它；否则把它视为等待外部能力变化的 blocker，不要立刻重跑并追加新的 review 行。
 
 ## 再选最高价值项
 
@@ -181,9 +188,9 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 ## Step 8：Git 提交
 
 - `git status` / `git diff` 确认变更边界
-- `git add`：
-  - 若 CSV 位于 `issues/`：代码变更 + CSV 文件
-  - 若 CSV 位于 `.mission/`：只 add 代码变更，不 add `.mission` 工件
+- 正式 mission：用显式路径加入代码变更和整个 `issues/<stem>/` 证据集
+- 外部 CSV：只加入本任务代码路径，以及已经 tracked 或明确位于 `issues/` 的 CSV/sidecar；ignored 外部工件保持本地，不 force-add
+- 提交前比较当前 index 与任务开始快照，确认没有无关 staged patch 进入本次提交
 - commit message 遵循项目提交约定（`<emoji> <type>(scope): summary` + Why/Why this works/Remaining 正文）
 - 若 commit 失败：回滚 `git_state` 为 `未提交`，记录 `blocked:git commit failed <原因>`
 
@@ -214,15 +221,16 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 - 若前面仍有未完成的普通 issue，先跳过当前 review 行，继续普通 issue
 - review 不实现功能；review 只审计、记录、追加可执行工作
 - review 行必须包含任务专属 claim/evidence 检查项；如果 `review_regression_requirements` 仍是纯通用套话，先回读 `source_doc`、当前 CSV 和交付证据，补齐该行后再执行 review
-- 若任意行 `notes` 包含 `claims:CLAIM-*` 但没有可读的 `claim_ledger:<path>`，CSV 不完整；先在 artifact root 补齐 `<csv-stem>.claims.json` 并写回 `claim_ledger:<csv-stem>.claims.json`，不得把 claim id 当作可审计证据
+- 若任意行 `notes` 包含 `claims:CLAIM-*` 但没有可读的 `claim_ledger:<path>`，CSV 不完整；先在 artifact root 补齐 `<csv-basename>.claims.json` 并写回 `claim_ledger:<csv-basename>.claims.json`，不得把 claim id 当作可审计证据
+- 若输入 CSV 原本没有 review 行，按硬规则 23 合成 `REVIEW-01`；这类 review 只引用 `source_csv` 和确实存在的 sidecar，不补造 `source_doc`、claim ledger 或 outcome contract
 
 ## Review 输入
 
 独立愿景 review 必须基于以下材料：
 
-- 批准文档或计划文档
+- canonical 任务使用 approved spec；兼容任务使用 `source_csv` 和所有普通行的 scope/acceptance 数据
 - 当前 CSV 的全部行和状态
-- claim/evidence ledger JSON：源文档中可验证承诺、对应 issue、生产路径、证据等级、受限项；路径来自 CSV notes 的 `claim_ledger:<path>`
+- 确实存在的 claim/evidence ledger、Outcome Contract 和 Deferred Findings ledger；兼容 CSV 缺少这些 sidecar 时保持缺省
 - 当前代码 diff / commit 记录
 - 测试与 MCP 证据
 - 交付物中的声明：文件名、函数名、测试名、metadata、报告、CSV notes、状态更新和 commit message
@@ -238,12 +246,13 @@ P0 → P1 → P2；优先能解阻塞/提供公共能力的任务；减少无意
 
 | 优先级 | 模式 | 记录值 | 独立性 | 要求 |
 |--------|------|--------|--------|------|
-| 1 | 当前会话 direct `spawn_agent` + `wait` | `review_agent_mode:direct-spawn-agent` | `review_independence:strong` | 子 agent 与主 agent 同模型；prompt 不包含主 agent 结论 |
-| 2 | `codex exec --ephemeral --json --skip-git-repo-check --sandbox read-only [-m <current-model>]` | `review_agent_mode:codex-exec-subagent` 或 `review_agent_mode:codex-exec-independent` | `review_independence:strong` | 优先让 exec 会话再 spawn 一个 reviewer；不可 spawn 时由 exec 会话独立 review；能确认当前模型时显式传 `--model` |
-| 3 | `codex review` | `review_agent_mode:codex-review-diff-only` | `review_independence:medium` | 只能作为代码 diff 补充；仍需主流程检查 spec/CSV/claim ledger |
-| 4 | 主会话 fallback | `review_agent_mode:main-session-fallback` | `review_independence:weak` | 只允许在前 3 项都不可用时使用；必须写 `validation_limited:independent review unavailable` |
+| 1 | 当前会话派发注册的 `reviewer` 子代理 | `review_agent_mode:reviewer-subagent` | `review_independence:true` | 请求 `gpt-5.6-sol` high；只读；prompt 不含主代理结论；禁止再委派 |
+| 2 | `codex exec --ephemeral --json -m gpt-5.6-sol --sandbox read-only` | `review_agent_mode:codex-exec-independent` | `review_independence:true` | 用 `shutil.which("codex")` 解析平台 launcher；由独立 exec 会话完成完整 vision review |
+| 3 | 主会话按同一 prompt 自审 | `review_agent_mode:self-review` | `review_independence:false` | 只在前两项失败时使用；如实记录 capability failure，但完成的 self-review 可以闭环 |
 
-若存在 `scripts/run_vision_review.py`，优先用它执行第 2 项，避免手写复杂命令。
+`codex review` 只能补充 Git diff 证据，不是 closing mode。运行过 diff-only review 后，仍要走上述阶梯完成 vision review。
+
+用 `scripts/run_vision_review.py` 执行第 2 项；脚本找不到 CLI 或调用失败时，记录原因并进入 self-review。
 
 脚本用法（路径相对本 skill 目录）：
 
@@ -252,30 +261,35 @@ python scripts/run_vision_review.py \
   --csv <csv-path> \
   --source-doc <source-doc-path> \
   --claim-ledger <claim-ledger-json-path> \
+  --outcome-contract <outcome-contract-json-path> \
+  --deferred-ledger <deferred-ledger-json-path> \
   --review-log <csv-path-without-.csv>.review.md \
+  --output reviews/review-01.json \
   --handoff <csv-path-without-.csv>.handoff.md \
   --workdir <repo-root> \
-  --model <current-model>
+  --model gpt-5.6-sol
 ```
 
-脚本成功时输出 review JSON；把 JSON 摘要写入 review log，并把 `review_agent_mode` / `review_independence` / `review_actual_model` / `claim_coverage` / `claim_coverage_status` / `review_result` / 必要的 `validation_limited` 写入 CSV `notes`。脚本失败不等于 review 完成：记录失败原因后继续尝试下一阶能力。
+兼容 CSV 没有 source doc 时省略 `--source-doc`。脚本成功时输出 review JSON；把 JSON 摘要写入 review log，并把 `review_json:<path>`、mode、independence、requested/observed model、model evidence、coverage、result 和必要的 `validation_limited` 写入 CSV `notes`。脚本失败不等于 review 完成：记录失败原因后进入 self-review。
 
 ### Reviewer prompt 硬要求
 
 reviewer prompt 必须明确写入：
 
-- 使用与主 agent 相同的模型；若无法确认，记录实际模型和 `validation_limited:model parity unknown`
-- **模型能力门槛（高风险产出专用）**：reviewer 与 handoff 生成属于高风险产出（结论要喂给机械验收、错了影响闭环判断），承担这类活的 spawn-agent / 子 reviewer 必须用与主模型同档、或最多低一个推理强度的模型；禁止用更弱的小模型（如 mini 档）跑 reviewer。低风险只读/汇总类 spawn 不受此限。实际模型必须写入 `review_actual_model`，弱于门槛时记 `validation_limited:reviewer model below threshold` 并降级为 `limited_review`。
+- 独立路径固定请求 `gpt-5.6-sol`；requested model 与 observed model 分开记录
+- observed model 只能来自 host/session metadata 或 CLI JSON event stream。reviewer 文本和 review JSON 自报的模型不算证据
 - 只基于批准文档或原始请求、CSV、claim/evidence ledger、diff/commit、测试/MCP 证据、交付物声明和 review log
 - 不信任主 agent 的结论性总结
 - 不为了找问题而找问题；只有可证伪差距才算 gap
 - 每个 gap 必须包含 `source_ref`、`evidence_ref`、`why_it_matters`、`suggested_followup_issue`
 - 必须检查声明与证据等级是否一致，尤其是替代验证是否被包装成原目标通过
+- 每个发现先分为 `current-scope gap`、`human-required blocker`、`deferred_improvement` 或 `future_decision`
+- `current-scope gap` 只能进入 `gaps`，不得延期；后两类写入 `deferred_findings`，按语义和证据去重，不得自动变成 follow-up issue
 
 输出结论必须分为三类：
    - `vision_met`: 已达成批准文档愿景
    - `gaps_found`: 仍有差距
-   - `limited_review`: 独立 review 不可用或证据不足，不能给强通过结论
+   - `limited_review`: 证据不足，无法判断当前承诺是否达成
 
 将本轮结论写入 `<csv-path-without-.csv>.review.md`，与 CSV 同目录。若同时保存 reviewer 原始 JSON、JSONL 或 prompt，写入 artifact root 下的 `reviews/`。
 
@@ -296,18 +310,48 @@ handoff 是**施工交工单**——用户隔一段时间回来打开它，能�
 
 ### 内容结构（必须按此顺序）
 
-#### 第一层：总结（3 秒读完）
+#### 第一层：先看结论（3 秒读完）
 
 一段话，用大白话说清楚：
 - 这轮执行的是哪篇 spec / 设计文档
-- spec 里承诺的核心能力，现在整体兑现到什么程度
-- 有没有降级或阻塞
+- 整体判定是 `pass / fail / partial / unknown / not_run` 中的哪一个
+- 什么决定性结果或第一处失败支撑这个判定
+- 最重要的一条 blocked claim 是什么
 
 示例风格：
 
 > 本轮实现了 Memory Foundation 设计里的五项核心能力中的四项。MemoryRecord 入库、状态机流转、Consolidator 事件消费、检索注入都已完成并通过测试。L3 playbook 自动提炼降级为 proposed-only，因为多证据融合算法 spec 没给具体规则，当前只标记 eligibility 不自动 activate。
 
-#### 第二层：spec 目标逐条对账（30 秒浏览）
+#### 第二层：这份交工单告诉你什么
+
+用一段话说明 handoff 的角色、证据输入、读者和边界：它解释 spec、代码、测试、trace、score 和 review 证据，但不生产运行结果、不覆盖 canonical scorer，也不把“代码完成”写成“能力已证明”。
+
+#### 第三层：你现在可以确定什么（30 秒浏览）
+
+逐条呈现 Outcome Contract 的 reader questions，不暴露 `OUTCOME-*` id，也不改写问题文本：
+
+| 你关心的问题 | 判定 | 直接答案 | 关键证据 | 可信度 | 结论边界 | 下一步 |
+|---|---|---|---|---|---|---|
+
+答案判定只允许 `pass / fail / partial / unknown / not_run`；可信度只允许 `high / moderate / low / unknown`。每个问题必须有证据引用、边界和下一步。没有证据时写 `unknown` 或 `not_run`，不能猜。
+
+这一张表由 review JSON 机械渲染。问题、判定、直接答案、证据（多个引用用 `; ` 连接）、可信度、边界和下一步必须与 review JSON 逐字段一致。
+
+#### 第四层：决定整体状态的结果
+
+说明成功条件、本轮实际到达的最后正常阶段、第一处失败或证据缺口，以及整体判定。必须分开实现状态、验证状态和能力结论。
+
+#### 第五层：目前仍不能声称什么
+
+逐条呈现 Outcome Contract 的 blocked claims：
+
+| 不能声称的结论 | 原因 | 解除条件 |
+|---|---|---|
+
+`partial`、`unknown`、`not_run` 不得在总结中合并成 pass 或“能力完成”。
+表中的 claim、原因和解除条件必须与 Outcome Contract 逐字段一致。
+
+#### 第六层：spec 目标逐条对账
 
 以 spec 定义的能力/目标为单位（不是 CSV 行号），用表格或编号清单列出每项：
 
@@ -320,7 +364,7 @@ handoff 是**施工交工单**——用户隔一段时间回来打开它，能�
 - 但如果 spec 原文太长或太散文化，提炼为一句话
 - "实际效果"必须从用户/产品视角写，不是从代码视角——说"搜索现在能找到联系人邮箱了"而不是"research_contacts 返回非空 list"
 
-#### 第三层：施工细节
+#### 第七层：施工细节
 
 按模块或功能区域组织（不是按 CSV 行号），每块覆盖以下角度（有什么写什么，不强制每块都写全）：
 
@@ -371,13 +415,13 @@ flowchart LR
     B -.本轮新增.-> C[remember_user_memory 正常写入]
 ```
 
-#### 第四层：验证情况
+#### 第八层：验证情况
 
 - 跑了什么测试、结果如何（精简，一两行够了）
 - 哪些验证是降级的（没跑真实服务、缺凭证等），如实说
 - 不要把这部分当主角——前三层才是重点
 
-#### 第五层：后续可操作
+#### 第九层：后续可操作
 
 - **还剩什么**：未完成项、需要产品决策的点、已知限制
 - **阻塞/配置**：如果有需要用户动手的事（配置凭证、启动服务、审批、购买），明确列出解除条件
@@ -385,6 +429,13 @@ flowchart LR
 - **去哪看**：如果有可观测数据（监控面板、trace 系统、日志、DB 查询），告诉用户地址和过滤条件
 
 这一层是泛用的——有什么写什么，没有就不写。不要硬编码特定工具名称。
+
+若 Deferred Findings ledger 中存在 `status=open` 的记录，必须在“后续可操作”之前增加独立的 `## 待讨论` 章节：
+
+- 每条开放记录都用自然中文说明“发现了什么、证据是什么、为什么不阻塞本轮、需要用户决定什么”。
+- 每条正文前保留隐藏标记 `<!-- deferred:DF-001 -->`，用于机械覆盖检查；可见标题和正文不得出现 `DF-001`、`deferred_improvement`、snake_case 等内部审计文本。
+- 不得把当前 scope/acceptance gap 写进该章节。未完成的当前承诺仍放在“还剩什么”，并由正式 follow-up issue 负责。
+- machine ledger 不经过 `humanizer-zh`；handoff 的可见正文必须经过 `humanizer-zh`。隐藏标记、trace id、路径和结构化证据不得改写。
 
 ### 风格硬规则
 
@@ -398,15 +449,19 @@ flowchart LR
 
 ### 生成规则
 
-- 走脚本（capability 阶梯第 2 项）时，传 `--handoff <path>`，让 reviewer 在同一次 pass 里直接产出 `handoff_markdown`，脚本写盘为草稿。
-- 走 direct `spawn_agent`（第 1 项）时，reviewer prompt 必须额外要求返回 `handoff_markdown`，并把上述内容结构和风格硬规则完整传入 reviewer prompt，主 agent 接收为草稿。
-- 走 weak fallback（第 4 项，主会话自审）时，handoff 顶部必须写 `WARNING: self-review only, NOT independently verified`，独立性标签写 `weak`，不得让自评看起来像独立结论。
+- 走脚本（第 2 项）时，传 `--handoff <path>`，让 reviewer 在同一次 pass 里产出 `handoff_markdown` 草稿。
+- 走注册 `reviewer` 子代理（第 1 项）时，prompt 必须要求返回 `handoff_markdown`，并传入上述结构和风格规则。
+- 走 self-review（第 3 项）时，handoff 顶部必须写 `WARNING: self-review only, NOT independently verified`，记录 `review_independence:false`，不得让自评看起来像独立结论。
 - handoff 是**只读派生产物**：内容来自 source doc / CSV / review JSON / 代码实际状态，禁止手工编辑；要改内容就重跑 review 重新生成。
 - handoff 内容硬约束：每句话必须可追溯到上述数据源，禁止用固定模板或漂亮话填充篇幅（与项目硬门禁"不得用输出修补伪装能力"一致）；数据源薄就如实写薄，不许编。
 - 生成后在 REVIEW 行 `notes` 追加 `handoff:<path>`。
-- **落盘后必须跑 handoff contract check**（机械验收，不信 reviewer 自报，对齐 superpowers "看机器证据"原则）：
+- 合并 reviewer 新发现到 `<stem>.deferred.json`：只接受 `deferred_improvement` / `future_decision`，按“含义 + evidence_refs”去重，分配稳定 `DF-NNN`；在来源 CSV 行 notes 写 `deferred_findings:<ids>`。
+- 先运行 `python <skill-dir>/scripts/validate_deferred_ledger.py <csv-path> --workdir <repo-root>`。失败时修 ledger 或 notes，不得继续做 handoff contract check。
+- handoff 完成后在最新 REVIEW notes 回填 `deferred_coverage:<covered>/<open>`。
+- **落盘后必须跑 handoff contract check**（机械验收，不信 reviewer 自报）：
   - 运行 `python <skill-dir>/scripts/check_handoff_contract.py <handoff-path> --csv <csv-path>`。
-  - contract check 会同时确认三件事：文件名是 `.handoff.md`、同名前缀 CSV 的 `REVIEW-*` 行 notes 记录了 `handoff:<path>`、markdown 通过 `lint_handoff.py` 的骨架检查。
+  - contract check 会确认 `.handoff.md` 命名、REVIEW notes 的 `handoff:<path>`、markdown 骨架；存在开放 Deferred Findings 时，还会逐条核对隐藏标记、`deferred_coverage` 和 `handoff_humanized:true`。
+  - 新任务存在 `outcome_contract:<path>` 时，CSV notes 还必须有 `review_json:<path>` 和 `handoff_humanized:true`；contract check 会校验 contract schema、review JSON 自洽性、每个 reader question/blocked claim 与 handoff 表格逐字段一致、核心语义章节与答案列齐全。缺任一项均失败。
   - 退出码 0 = 通过；在 REVIEW 行 `notes` 追加 `handoff_contract:passed`。
   - 退出码 1 = 不合格：如果是路径或 notes 缺失，先修正 CSV notes 后重跑；如果是 markdown 残件，**重生成一次** handoff 后重跑。
   - 重试后仍失败：在 REVIEW 行 `notes` 追加 `handoff_contract:failed <缺项>`。允许代码交付继续收口，但不得把本轮 review 写成 `vision_met`，最终回复必须明说 handoff 不合格，不能声称"handoff 已完成"。
@@ -421,30 +476,47 @@ reviewer 产出的 `handoff_markdown` 是草稿，落盘前**必须**经过 huma
 2. 主 agent 调用 `humanizer-zh` skill 对草稿进行语言润色
 3. 润色后的版本才是最终 handoff，写入 `<csv-path-without-.csv>.handoff.md`
 
+Outcome answer 表、blocked claim 表、Deferred Findings 隐藏标记、trace id 和结构化证据属于机械字段隔离区，`humanizer-zh` 不得改写；只润色可见说明文字。否则 handoff 无法与 review JSON / Outcome Contract / deferred ledger 对账，contract check 必须失败。
+
 润色规则以 humanizer-zh skill 本身为准。
 
 若 humanizer-zh 不可用（skill 未安装或调用失败）：
-- 不阻塞落盘——直接写入草稿版本
-- 在 REVIEW 行 `notes` 追加 `handoff_humanized:false`
+- 只允许把原稿保存为 `<csv-path-without-.csv>.handoff.draft.md`，不得覆盖正式 `.handoff.md`
+- 在 REVIEW 行 `notes` 追加 `handoff_humanized:false; blocked:humanizer-zh unavailable`
+- `check_handoff_contract.py` 必须失败，当前 REVIEW 不得标记完成、不得写 `vision_met`
+- humanizer-zh 恢复后，从 draft 重新执行润色、写正式 handoff，并把 notes 更新为 `handoff_humanized:true`
 
 ### handoff 生成失败的降级（反卡死）
 
 若脚本 / reviewer 未能产出 `handoff_markdown`（输出截断、JSON 不合法等）：
 
-- **不阻塞 mission 闭环**——handoff 永远不能比代码交付优先级高，它是辅助产物。
 - 在 REVIEW 行 `notes` 记 `handoff:generation_failed <reason>`。
 - 主 agent 用 review JSON + CSV + 代码现有数据，按上述内容结构手动渲染一份兜底 handoff，顶部标 `WARNING: auto-generation failed, rendered by main agent as fallback`。
-- 兜底文档仍写入 `<csv-path-without-.csv>.handoff.md`，并在 REVIEW 行 `notes` 追加 `handoff:<path>`；随后照常运行 `check_handoff_contract.py`。若 contract 失败，按 `handoff_contract:failed <缺项>` 处理，不得静默当作合格 handoff。
+- 兜底草稿仍必须经过 humanizer-zh，机械字段隔离规则不变。处理后写入 `<csv-path-without-.csv>.handoff.md`，并在 REVIEW 行 `notes` 追加 `handoff:<path>; handoff_humanized:true`。
+- 随后运行 `check_handoff_contract.py`。若生成或 humanizer 仍失败，当前 REVIEW 保持未完成，不得静默降级为合格 handoff。
 
-## 发现差距时
+## 发现问题时
 
-若结论为 `gaps_found`：
+先分类，不能把不同性质的问题混成一批 follow-up：
+
+| 分类 | 判断标准 | 处置 |
+|------|----------|------|
+| `current-scope gap` | 违反 source doc、当前 issue acceptance criteria、生产接线要求或声明-证据合同 | 现在修；无法在原行修完时追加正式 follow-up issue 和下一轮 REVIEW，继续执行 |
+| `human-required blocker` | 只有用户或外部主体能提供授权、凭证、付费/业务决定或不可逆操作 | 记录 blocker，继续其他可推进行；全部剩余项都属于此类时才停 |
+| `deferred_improvement` | 当前承诺已经满足，但观察到范围外的质量、评估或架构改进 | 写入 deferred ledger，不追加 issue |
+| `future_decision` | 当前承诺已经满足，但后续产品或架构存在真实取舍，需要用户决定 | 写入 deferred ledger，不追加 issue |
+
+拿不准是否属于当前范围时，回读 source doc、Outcome Contract 和 acceptance criteria。证据不足不能成为延期理由；只要可能影响当前承诺，就按 `current-scope gap` 处理。
+
+若结论为 `gaps_found`，只把其中的 `current-scope gap` 转成执行工作：
 
 1. 将每个差距转换为新的 follow-up issue，追加到当前 CSV 尾部
 2. 再追加下一轮 review 行：`REVIEW-(N+1)`
 3. 当前 `REVIEW-N` 标记为闭环完成
 4. 提交当前 CSV、review log，以及必要的文档更新
 5. 继续执行刚追加的 follow-up issue，不等待用户
+
+`deferred_improvement` 和 `future_decision` 进入 `<artifact-root>/<stem>.deferred.json`。在发现它的 CSV 行 notes 追加 `deferred_ledger:<path>; deferred_findings:<ids>`。同一问题跨 issue 或 review 重复出现时更新原记录的 `source_issue_ids` / `evidence_refs`，不得重复造 id。
 
 追加后的顺序示例：
 
@@ -467,22 +539,21 @@ REVIEW-02
 - 缺少 agent 无法获取的外部凭证、账号、权限、付费决策、法律/安全/业务决策
 - 必需的第三方或人工动作位于工作区外，agent 无法完成
 - 继续执行会要求伪造证据、凭证、数据或用户意图
-- 独立 review 的强/中路径都不可用，当前 CSV 只剩 `retry_when:independent_review_capability_changes` 的 rerun review 行，继续会重复追加同类 review 行
 
-其他问题都必须继续：
+其他问题不一定要扩张当前 CSV：
 
 - 架构分歧
 - 范围细节不清
 - 产品细节不完整
 - 实现路线不确定
-- review 发现质量差距
+- review 发现不影响当前承诺的质量改进或未来决策
 
 处理方式：
 
-- 在 review log 写 `Assumption` / `Decision Debt` / `Risk`
-- 在 CSV notes 写 `assumption:<...>`、`decision_debt:<...>` 或 `risk:<low|medium|high> <...>`
+- 在 review log 写 `Assumption` / `Decision Debt` / `Risk`，并记录 Deferred Findings 摘要
+- 在 CSV notes 写 `assumption:<...>`、`decision_debt:<...>`、`risk:<low|medium|high> <...>` 或 `deferred_findings:<ids>`
 - 选择最小可逆路径
-- 追加 follow-up issue
+- 只有 current-scope gap 才追加 follow-up issue
 - 继续执行
 
 ## Review log 格式
@@ -490,26 +561,31 @@ REVIEW-02
 文件：`<csv-path-without-.csv>.review.md`
 
 - `issues/<stem>/<stem>.csv` → `issues/<stem>/<stem>.review.md`
-- `.mission/<stem>/<stem>.csv` → `.mission/<stem>/<stem>.review.md`
 - Legacy: `issues/<topic>.csv` → `issues/<topic>.review.md`
+- External: `<dir>/<topic>.csv` → `<dir>/<topic>.review.md`
 
 每轮追加：
 
 ```markdown
 ## REVIEW-N
 - Source doc: <path>
-- Review agent: direct-spawn-agent | codex-exec-subagent | codex-exec-independent | codex-review-diff-only | main-session-fallback
-- Review independence: strong | medium | weak
+- Review agent: reviewer-subagent | codex-exec-independent | self-review
+- Review independence: true | false
+- Review requested model: gpt-5.6-sol
+- Review observed model: <catalog model id | unknown>
+- Review model evidence: session-metadata | event-stream | parent-runtime | unknown
 - Scope checked: <goals/non-goals/acceptance areas>
 - Evidence checked: <commits/tests/MCP/logs>
 - Claim coverage: complete | gaps | unknown
 - Claim/evidence alignment: matched | mismatches found | limited
 - Limited validation honestly reported: yes | no | not_applicable
+- Handoff humanized: true | false
 - Result: vision_met | gaps_found | limited_review
 - Gaps: <none or bullet list>
 - Follow-up issues added: <none or ids>
 - Assumptions: <none or bullet list>
 - Decision debt: <none or bullet list>
+- Deferred findings: <none or ids + concise evidence summary>
 - Human-required blockers: <none or exact blocker>
 ```
 
@@ -517,9 +593,9 @@ REVIEW-02
 
 `REVIEW-N` 只有在 review log 已写入、handoff.md 已生成（或已记 `handoff:generation_failed` 并产出兜底）、且 handoff contract check 结果已写入 notes 后才能完成：
 
-- 若 `vision_met`：必须同时满足 `handoff_contract:passed`；标记 `REVIEW-N` 完成，若无其他未完成行则结束 CSV
-- 若 `gaps_found`：追加 follow-up issue 和 `REVIEW-(N+1)` 后，标记 `REVIEW-N` 完成并继续
-- 若 `limited_review` 且没有可执行 gap：标记当前 review 行完成，但必须追加 `REVIEW-(N+1)`；新行 `notes` 写 `blocked:waiting independent review capability; retry_when:independent_review_capability_changes; previous_review_mode:<mode>`，`acceptance_criteria` 要求在更强 independent review 可用时重跑；不得把 limited 结论写成 `vision_met`，也不得立即选择新行造成无限 review 循环
+- 若 `vision_met`：必须同时满足 `handoff_contract:passed`；标记 `REVIEW-N` 完成，若无其他未完成行则结束 CSV。开放 Deferred Findings 只进入 handoff 的“待讨论”，不阻止 `vision_met`
+- 若 `gaps_found`：把其中的 current-scope gaps 追加为 follow-up issue，再追加 `REVIEW-(N+1)`；标记 `REVIEW-N` 完成并继续
+- 若 `limited_review` 且没有可执行 gap：标记当前 review 行完成，并如实记录缺失证据；不得仅为等待独立能力变化追加 `REVIEW-(N+1)`
 - 若存在 human-required blocker：记录 blocker，保持 `git_state=未提交`，停止并请求最小必要输入
 
 # 反暂停护栏
@@ -534,7 +610,7 @@ REVIEW-02
 - 当前 issue 部分阻塞，但还有其他 issue 可推进
 - 测试存在既有失败，但当前 issue 仍可受限验收或切下一条
 - **修复了 issue 内的子问题（blocker / 中间 bug）后拿到了阶段性证据**——这不是汇报点，直接继续该 issue 的下一步验证
-- `REVIEW-*` 发现缺口但可以追加 follow-up issue
+- `REVIEW-*` 发现 current-scope gap 且可以追加 follow-up issue
 - review 发现架构、范围、产品或实现路线存在普通歧义
 
 若你准备输出阶段总结，先做以下停止断言：
@@ -613,7 +689,8 @@ REVIEW-02
 | 已完成 `X/Y` 并已同步阶段成果 | **继续** |
 | 阶段切换 / checkpoint 完整 | **继续** |
 | 想先做阶段汇报 | **继续** |
-| Review 发现可执行缺口 | 追加 follow-up issue 和下一轮 review 后继续 |
+| Review 发现当前 scope/acceptance gap | 追加 follow-up issue 和下一轮 review 后继续 |
+| Review 发现范围外改进或未来决策 | 写 deferred ledger，继续；整批完成后在 handoff 展示并停止 |
 | 测试环境慢 | 等，不跳过 |
 | 小歧义 | 合理假设，记 notes，继续 |
 | 人类不可替代阻塞 | 问用户确认后继续 |
@@ -635,12 +712,12 @@ REVIEW-02
 | "用户问我为什么停/做到哪了，先完整回答完这一轮" | 可以简短回答，但回答本身不是退出执行态的许可。答完后必须在同一 turn 继续工具调用。 |
 | "输出完状态更新模板后，这轮对话可以结束了" | 状态更新是内联 commentary，不是 turn 终点。写完 `continue_now` 后必须在同一 turn 内继续工具调用。 |
 | "前 N 条已闭环，先整齐收口再继续" | 这是干净边界谬误。partial completion 是最脏的状态——强制恢复上下文比继续执行代价高得多。混合汇报"已完成"和"进行中"完全正常。 |
-| "工作区有用户的未提交改动和我的改动混在一起" | 这不是停止理由。用 `git stash` 或分开 `git add` 管理边界，继续推进。 |
-| "review 发现架构问题，先问用户" | 只有人类不可替代才停。写 assumption/risk，追加 follow-up，继续。 |
+| "工作区有用户的未提交改动和我的改动混在一起" | 用显式 task paths 和 index 快照隔离；禁止 stash。若同一路径无法隔离，记录 human-required blocker。 |
+| "review 发现架构问题，先问用户" | 先判断是否影响当前承诺。影响就追加 follow-up；不影响就写 deferred ledger，整批完成后再讨论。 |
 | "review 行没写 review 模式也可以执行" | 不可以。先补齐 `review_agent_mode:pending`、`review_independence:pending` 和任务专属 claim/evidence 条件，再执行 review。 |
-| "当前会话没有 `spawn_agent`，所以只能主会话自审" | 不对。先尝试 `codex exec --ephemeral --json --skip-git-repo-check --sandbox read-only` 独立 reviewer；失败后才能 weak fallback。 |
+| "当前会话没有 `reviewer` 子代理，所以只能停下" | 不对。先尝试只读 ephemeral `codex exec`；失败后主会话完成 self-review。 |
 | "`codex review` 已经跑过，所以愿景 review 完成" | 不够。`codex review` 只审 diff，不能替代 spec/CSV/claim ledger 对账。 |
-| "fallback review 也可以写 vision_met" | 不可以。weak fallback 只能写 `limited_review`，除非后续独立 review 给出强结论。 |
+| "self-review 不能闭环，所以要等用户手动 /review" | 不对。完整 self-review 可以闭环，但必须记录 `review_independence:false`，不得冒充独立结论。 |
 | "替代测试跑绿了，可以说原目标通过" | 不可以。替代测试只能证明替代范围；原目标没验证就写受限验收。 |
 | "名字/报告写得强一点没关系" | 不可以。文件名、测试名、metadata、报告和状态更新都是声明，必须和实际行为一致。 |
 | "REVIEW 行是通用模板，也能审" | 不够。先从源文档/原始任务补齐任务专属 claim/evidence 检查项。 |
@@ -689,7 +766,8 @@ REVIEW-02
 - 若受限验收：notes 已写 `validation_limited/manual_test/mcp_evidence/evidence/risk`
 - 声明-证据一致性已检查：没有把 mock、fixture、dry-run、字符串检查或静态验证包装成原目标通过
 - `review_initial_state` 与 `review_regression_state` 均已推进
-- `issues/<stem>/<stem>.csv` 与代码一起提交，或 `.mission/<stem>/<stem>.csv` 正确保留为本地工件，状态枚举值合法；legacy 平铺 CSV 只在恢复旧任务时保留
+- 正式 `issues/<stem>/` 证据集与代码按显式路径提交；外部 ignored 工件保持本地，状态枚举值合法
+- index 与任务开始快照对比完成，无关 staged patch 未进入提交；未使用 `git stash`
 - 文档/注释/refs 已同步
 - commit message 遵循项目提交约定
 - 无无关改动混入

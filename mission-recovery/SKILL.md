@@ -17,7 +17,7 @@ description: Use when the user wants to continue, resume, or recover interrupted
 
 # 扫描顺序
 
-先扫描目录化 CSV，再兼容 legacy 平铺 CSV，找到未完成的 CSV：
+只扫描 `issues/`。先扫描目录化 CSV，再兼容 legacy 平铺 CSV，找到未完成的 CSV：
 
 ```
 扫描: issues/*/*.csv
@@ -30,19 +30,14 @@ description: Use when the user wants to continue, resume, or recover interrupted
 条件: 同上
 优先级: 若 `issues/*/*.csv` 无可恢复项，再按最近修改时间排序；若同 stem 同时存在目录化和平铺 CSV，优先目录化 CSV
 
-扫描: .mission/*/*.csv
-条件: 同上
-优先级: 若 `issues/` 无可恢复项，再按最近修改时间排序
-
-扫描: .mission/*.csv
-条件: 同上
-优先级: 若 `.mission/*/*.csv` 无可恢复项，再按最近修改时间排序；若同 stem 同时存在目录化和平铺 CSV，优先目录化 CSV
 ```
+
+恢复器不扫描其他目录。用户显式提供的任意合法外部 CSV 仍由 `mission` 直接路由到 `mission-csv-execute`。
 
 ## 无可恢复内容
 
 ```
-输出: "没有找到可恢复的任务。使用 mission 提供批准文档、CSV 路径或任务描述开始新任务。"
+输出: "没有找到可恢复的任务。使用 mission 提供 spec、CSV 路径或任务描述开始新任务。"
 停止。
 ```
 
@@ -77,7 +72,7 @@ description: Use when the user wants to continue, resume, or recover interrupted
 ```
 找到多个可恢复任务：
 1. issues/2026-03-20_10-00-00-add-auth/2026-03-20_10-00-00-add-auth.csv (3/7 已完成)
-2. .mission/2026-04-27-agent-loop-cleanup/2026-04-27-agent-loop-cleanup.csv (5/10 已完成)
+2. issues/2026-04-27-agent-loop-cleanup/2026-04-27-agent-loop-cleanup.csv (5/10 已完成)
 恢复哪个？（输入序号或 "all" 按顺序执行）
 ```
 

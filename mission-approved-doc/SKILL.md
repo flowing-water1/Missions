@@ -1,25 +1,25 @@
 ---
 name: mission-approved-doc
-description: Use when the input is a user-approved design doc or implementation plan and the agent needs to turn it into an executable issues CSV before handing off to CSV execution.
+description: Use when the input is a committed, unchanged canonical mission spec with status approved and the agent needs to map it into executable issues artifacts before handing off to CSV execution.
 ---
 
 你现在是「批准文档执行器」。
 
 # 目标
 
-把一个**已获用户批准**的设计文档或计划文档转换为 `issues/<stem>/<stem>.csv`，然后交给 `mission-csv-execute` 闭环执行。
+把一个已提交且未改动的 canonical approved spec 转换为 `issues/<stem>/<stem>.csv`，然后交给 `mission-csv-execute` 闭环执行。
 
 # 流程
 
 ## Phase 1：批准门验证（HARD STOP）
 
-1. 确认输入文档存在
-2. 完整读取文档
-3. 确认用户已经明确批准该文档作为执行输入
-4. 若未批准则硬停，只输出：
+1. 确认输入文档存在并完整读取
+2. 运行 `python <mission-spec>/scripts/validate_spec.py <doc-path>`
+3. 只接受 `mission: spec`、`status: approved`、已存在于 `HEAD` 且工作副本未改动的文档
+4. 校验失败则硬停，只输出：
    ```
-   文档 <path> 尚未获用户批准。
-   请先明确批准后再执行。
+   文档 <path> 不是已提交且未改动的 approved mission spec。
+   请返回 mission-spec 修正或重新批准。
    ```
 5. 未经批准绝不执行任何代码变更
 
@@ -29,7 +29,7 @@ description: Use when the input is a user-approved design doc or implementation 
 
 | 来源 | 必须 | 提取内容 |
 |------|------|----------|
-| 设计文档 / 计划文档正文 | 是 | Goal, scope, constraints, affected files, task structure |
+| canonical spec 正文 | 是 | Goal, scope, constraints, affected files, task structure |
 | 显式 testing / validation 章节 | 重要 | 验收口径、命令、风险点 |
 | 与文档直接关联的 code/file refs | 重要 | `refs`, `area`, `required_mcp` 推断 |
 
@@ -86,6 +86,29 @@ description: Use when the input is a user-approved design doc or implementation 
 }
 ```
 
+## Phase 2.7：抽取 Outcome Contract
+
+读取 `mission-csv-execute/outcome-contract.md`，从 `execution_scope` 提取面向最终读者的 Outcome Contract，并与 CSV 同目录落盘为 `issues/<stem>/<stem>.outcomes.json`。
+
+Outcome Contract 与 claim ledger 分工不同：
+
+| 工件 | 回答什么 | 消费者 |
+|---|---|---|
+| `*.claims.json` | spec 承诺是否被实现和验证 | issue / vision review |
+| `*.outcomes.json` | 用户最终要知道什么、什么结果决定成败、现在不能声称什么 | vision review / handoff / 专项报告 |
+
+依次提取 `artifact_role`、`desired_effects`、`reader_questions`、`decisive_result` 和 `blocked_claims`。reader question 必须面向决策、可以证伪、有证据入口并声明范围。
+
+每个 effect/question/blocked claim 都必须有 `source_ref`。当前会话只可作为补充来源，并以 `source_ref=original-request` 持久化；不得凭模型印象增加源文档没有承诺的新能力。不得写 benchmark expected answer、case 特化提示或预填 pass/fail。
+
+生成后必须运行：
+
+```text
+python <mission-csv-execute>/scripts/validate_outcome_contract.py issues/<stem>/<stem>.outcomes.json
+```
+
+校验失败时先修 contract，不得生成 CSV 或进入执行。
+
 ## Phase 3：生成 CSV
 
 `mission-csv-execute/csv-schema.md` 是唯一固定 CSV schema。`mission-approved-doc` 只负责把批准文档映射成这套 19 列表头下的行数据，不定义第二套表头。
@@ -104,6 +127,9 @@ description: Use when the input is a user-approved design doc or implementation 
 - `required_skills` 与 `required_mcp` 必须在生成阶段显式写全
 - `refs` 必须至少包含 1 个 `path:line`
 - **闭环路径约束**：生成组件 issue 后，必须按 `doc-field-mapping.md` 闭环路径规则扫描跨模块消费关系、启动注册、工具注册、flow 注入点，为每个被文档承诺的连接点生成独立接线 issue
+- 每个普通 issue 和 `REVIEW-01` 的 `notes` 必须引用 `outcome_contract:<stem>.outcomes.json`
+- 同目录初始化 `<stem>.deferred.json`：`{"schema_version":1,"csv":"<stem>.csv","findings":[]}`；每个普通 issue 和 `REVIEW-01` 的 notes 都引用 `deferred_ledger:<stem>.deferred.json`
+- `REVIEW-01` 必须要求逐条回答 reader questions，并区分实现状态、验证状态和能力结论
 - 在普通执行 issue 之后，必须追加一条 `REVIEW-01` 作为首轮文档愿景验收；该行必须包含从源文档抽取的任务专属 claim/evidence 检查项，不能只写通用套话
 - 初始化状态：`未开始` / `未提交`
 
@@ -150,17 +176,15 @@ claim_ledger:<stem>.claims.json; claims:CLAIM-001,CLAIM-002; claim_coverage:X/Y;
 | `phase` | 最后阶段序号 |
 | `area` | `review` |
 | `title` | `Review documented vision against delivered work` |
-| `description` | `Use the strongest available independent review to compare approved-doc claims with delivered behavior, evidence level, CSV state, validation evidence, and review log.` |
-| `acceptance_criteria` | `WHEN all non-review issues before this row are closed THEN run the strongest available independent review against source-specific claim/evidence checks; WHEN gaps or overstated claims are found THEN append follow-up issues and REVIEW-02; WHEN review is limited THEN append REVIEW-02 for a later independent rerun, mark REVIEW-01 complete with review_result:limited_review, and do not close the CSV or mark vision_met; WHEN no gaps remain and review is not limited THEN close the CSV.` |
+| `description` | `Use the review capability ladder to compare approved-spec claims with delivered behavior, evidence level, CSV state, validation evidence, and review log.` |
+| `acceptance_criteria` | `WHEN all non-review issues before this row are closed THEN try reviewer-subagent, codex-exec-independent, then self-review and classify every finding; WHEN a current-scope gap or overstated claim is found THEN append follow-up issues and REVIEW-02; WHEN a deferred improvement or future decision is found THEN write it to the deferred ledger without appending an issue; WHEN no current-scope gaps remain THEN close the CSV after the completed review, recording whether it was independent.` |
 | `test_mcp` | `MANUAL` |
-| `required_skills` | `superpowers:requesting-code-review` |
+| `required_skills` | 留空 |
 | `required_mcp` | 留空，除非文档本身要求浏览器或外部验证 |
 | `review_initial_requirements` | `Verify all prior non-review rows are closed before running this review.` |
-| `review_regression_requirements` | `Run strongest available independent vision review against approved doc goals, non-goals, claim/evidence ledger, acceptance criteria, delivered diff, validation evidence, prior review logs, and source-specific claim/evidence alignment checks.` |
+| `review_regression_requirements` | `Run strongest available independent vision review against approved doc goals, non-goals, claim/evidence ledger, acceptance criteria, delivered diff, validation evidence, prior review logs, and source-specific claim/evidence alignment checks; classify current-scope gaps separately from deferred improvements and future decisions.` |
 | `refs` | `<doc-path>:1` |
-| `notes` | `review_kind:vision; review_agent_mode:pending; review_independence:pending; source_doc:<doc-path>; claim_ledger:<stem>.claims.json; claim_coverage:<X/Y>; claim_coverage_status:pending` |
-
-兼容旧 CSV 时可保留 `review_agent:same-model-sub-agent`，但它只是“优先使用同模型独立 reviewer”的意图标签。实际执行模式由 `mission-csv-execute` 写入 `review_agent_mode:<mode>`。
+| `notes` | `review_kind:vision; review_agent_mode:pending; review_independence:pending; review_requested_model:gpt-5.6-sol; review_observed_model:unknown; review_model_evidence:unknown; source_doc:<doc-path>; claim_ledger:<stem>.claims.json; outcome_contract:<stem>.outcomes.json; deferred_ledger:<stem>.deferred.json; review_json:reviews/review-01.json; claim_coverage:<X/Y>; claim_coverage_status:pending` |
 
 ## Phase 4：生成后摘要
 
@@ -174,6 +198,8 @@ claim_ledger:<stem>.claims.json; claims:CLAIM-001,CLAIM-002; claim_coverage:X/Y;
 - P0 任务: M 条
 - Claim 覆盖: A/B 条 spec 承诺已覆盖，P 条生产路径已覆盖，C 条标注 out_of_scope
 - Claim ledger: issues/<stem>/<stem>.claims.json
+- Outcome Contract: issues/<stem>/<stem>.outcomes.json
+- Deferred findings: issues/<stem>/<stem>.deferred.json
 - 下一步: 进入闭环执行
 ```
 

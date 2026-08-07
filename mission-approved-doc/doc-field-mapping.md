@@ -4,11 +4,11 @@
 
 ## 适用输入
 
-- `docs/superpowers/specs/*.md`
-- `docs/superpowers/plans/*.md`
-- 任何已获用户批准、且正文能清晰定义 scope / tasks / validation 的 Markdown 文档
+- `docs/specs/*.md`
+- frontmatter 通过 `mission-spec/scripts/validate_spec.py` 校验
+- `status: approved`，已提交且工作副本与 `HEAD` 一致
 
-## From design doc
+## From canonical spec
 
 | 章节 / 结构 | 提取内容 | CSV 字段 |
 |-------------|----------|----------|
@@ -18,20 +18,10 @@
 | `## Constraints` / `## Risks` | 关键约束与风险 | `priority`, `review_regression_requirements`, `notes` |
 | `## Testing` / `## Validation` / `## Success Criteria` | 验收口径 | `acceptance_criteria`, `test_mcp` |
 
-## From implementation plan
-
-| 结构 | 提取内容 | CSV 字段 |
-|------|----------|----------|
-| `### Task N` / `## Task N` | 阶段分组 | `phase`, `id` 前缀 |
-| `**Files:**` | 影响文件 | `refs`, `area` |
-| `- [ ] Step ...` | 原子工作项 | `title`, `description` |
-| `Run:` / `Expected:` | 验证命令 | `acceptance_criteria`, `review_initial_requirements` |
-| Commit / Review 说明 | 提交和回归边界 | `review_regression_requirements`, `notes` |
-
 ## Granularity rules
 
-1. 若计划文档已有 `Task` / `Step` 结构，优先按可独立提交的任务单元生成 issue
-2. 若只有设计文档，没有显式任务结构，则按独立模块、独立验证路径拆分 3-10 条 issue
+1. 若 spec 已有 `Task` / `Step` 结构，优先按可独立提交的任务单元生成 issue
+2. 若 spec 没有显式任务结构，则按独立模块、独立验证路径拆分 3-10 条 issue
 3. 一个 issue 只能对应一条清晰的验证路径；若两个工作项拥有不同失败路径或不同回归面，必须拆开
 4. 普通 issue 生成完毕后，固定追加 `REVIEW-01`；后续 review 轮次只由 `mission-csv-execute` 在发现缺口时追加
 
@@ -117,9 +107,8 @@ claim_ledger:<stem>.claims.json; claims:CLAIM-001,CLAIM-004; evidence_level:inte
 - `test_mcp` 固定为 `MANUAL`
 - `refs` 至少包含批准文档路径
 - `notes` 必须包含 `review_kind:vision`
-- 生成阶段的 `notes` 必须包含 `claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`
-- 执行阶段由 `mission-csv-execute` 回填 `review_actual_model:<model>`、`review_result:<result>`、`handoff:<path>` 等结果标签
-- `review_agent:same-model-sub-agent` 只是兼容旧 CSV 的意图标签，不再作为新 CSV 的必填 schema 字段；实际执行方式以 `review_agent_mode` 为准
+- 生成阶段的 `notes` 必须包含 `claim_ledger:<path>`、`claim_coverage:<covered>/<total>`、`claim_coverage_status:pending`、`review_agent_mode:pending`、`review_independence:pending`、`review_requested_model:gpt-5.6-sol`、`review_observed_model:unknown`、`review_model_evidence:unknown`
+- 执行阶段由 `mission-csv-execute` 回填实际 `review_agent_mode`、`review_independence`、观察模型证据、`review_result` 和 `handoff:<path>`
 - `REVIEW-01` 由 CSV 生成阶段创建
 - `REVIEW-02` 及之后由执行阶段在发现缺口时追加
 

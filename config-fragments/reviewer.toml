@@ -1,0 +1,2 @@
+[agents.reviewer]
+config_file = "agents/reviewer.toml"
