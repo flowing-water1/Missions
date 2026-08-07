@@ -10,25 +10,18 @@ Missions 是一套面向 Codex 和 Claude Code 的任务编排 skills。它把�
 
   新版不再要求 Missions 配合 Superpowers。需求讨论、spec 批准、任务生成、CSV 执行、review 和 handoff 现在由 Missions 自
   己串成一条完整流程。
+  
+  ### 工作流变化
 
-   环节             旧版                                    新版
-  ━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   需求讨论         superpowers:brainstorming               mission-spec
-  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
-   Spec 位置        docs/superpowers/specs/                 docs/specs/<YYYY-MM-DD>-<topic>.md
-  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
-   Markdown 路由    mission-doc-route 根据路径和内容判断    mission 根据 canonical frontmatter 路由
-  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
-   长任务入口       mission-long-task                       自然语言先进入 mission-spec
-  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
-   执行方式         Superpowers 计划技能配合 Missions       approved spec 直接生成 CSV 执行工件
-  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
-   Review           superpowers:requesting-code-review      只读 reviewer、ephemeral review、self-review 三级回退
-  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
-   工件目录         .mission/<stem>/ 或 issues/             统一使用 issues/<stem>/
-  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
-   恢复范围         扫描 .mission/ 和 issues/               只扫描 issues/
-
+  - 需求讨论：`superpowers:brainstorming` → `mission-spec`
+  - Spec 位置：`docs/superpowers/specs/` → `docs/specs/{YYYY-MM-DD}-{topic}.md`
+  - Markdown 路由：`mission-doc-route` 根据路径和内容判断 → `mission` 根据 canonical frontmatter 路由
+  - 长任务入口：`mission-long-task` → 自然语言需求先进入 `mission-spec`
+  - 执行方式：Superpowers 计划技能配合 Missions → approved spec 直接生成 CSV 执行工件
+  - Review：`superpowers:requesting-code-review` → 只读 reviewer、ephemeral review、self-review 三级回退
+  - 工件目录：`.mission/{stem}/` 或 `issues/` → 统一使用 `issues/{stem}/`
+  - 恢复范围：扫描 `.mission/` 和 `issues/` → 只扫描 `issues/`
+    
   ### 迁移注意事项
 
   - mission-doc-route 和 mission-long-task 已删除，新增 mission-spec。
