@@ -2,6 +2,46 @@
 
 Missions 是一套面向 Codex 和 Claude Code 的任务编排 skills。它把自然语言需求整理成可批准的 canonical spec，再生成 CSV 执行工件，按开发、初审、回归、提交四个状态持续推进，最后用独立 review 和 handoff 对照最初目标交工。
 
+
+  ## 版本更新：从 Superpowers 配套模式迁移
+
+  旧版 Missions 采用 Missions + Superpowers 的双柱结构：Superpowers 负责 brainstorming、计划编写、TDD、调试和 code
+  review，Missions 负责把批准后的文档转换成 CSV 并持续执行。
+
+  新版不再要求 Missions 配合 Superpowers。需求讨论、spec 批准、任务生成、CSV 执行、review 和 handoff 现在由 Missions 自
+  己串成一条完整流程。
+
+   环节             旧版                                    新版
+  ━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   需求讨论         superpowers:brainstorming               mission-spec
+  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
+   Spec 位置        docs/superpowers/specs/                 docs/specs/<YYYY-MM-DD>-<topic>.md
+  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
+   Markdown 路由    mission-doc-route 根据路径和内容判断    mission 根据 canonical frontmatter 路由
+  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
+   长任务入口       mission-long-task                       自然语言先进入 mission-spec
+  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
+   执行方式         Superpowers 计划技能配合 Missions       approved spec 直接生成 CSV 执行工件
+  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
+   Review           superpowers:requesting-code-review      只读 reviewer、ephemeral review、self-review 三级回退
+  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
+   工件目录         .mission/<stem>/ 或 issues/             统一使用 issues/<stem>/
+  ───────────────  ──────────────────────────────────────  ───────────────────────────────────────────────────────
+   恢复范围         扫描 .mission/ 和 issues/               只扫描 issues/
+
+  ### 迁移注意事项
+
+  - mission-doc-route 和 mission-long-task 已删除，新增 mission-spec。
+  - 旧的 .mission/ 任务不会再被自动恢复。需要继续执行的 CSV 应迁移到 issues/<stem>/，也可以通过完整路径显式执行。
+  - 旧的 docs/superpowers/specs/ 和 plans/ 文档不再根据路径自动识别。需要继续使用的 spec 应迁移到 docs/specs/，并补充
+    mission: spec frontmatter。
+
+  - 新版不再生成单独的 implementation plan。spec 获批后，由 mission-approved-doc 生成执行工件，再交给 mission-csv-
+    execute。
+
+  - Superpowers 仍可作为通用开发技能单独使用，但已经不是 Missions 主流程的依赖。
+  - 新版要求 Python 3.11+，必须安装 humanizer-zh；lite-arch 是建议依赖。
+
 ## 当前工作流
 
 ```text
